@@ -1,0 +1,22 @@
+<RCC>
+    <qresource prefix="/sprites">
+        <file alias="soldier_idle.png">assets/Soldier-Idle.png</file>
+        <file alias="soldier_walk.png">assets/Soldier-Walk.png</file>
+        <file alias="soldier_atk1.png">assets/Soldier-Attack01.png</file>
+        <file alias="soldier_atk2.png">assets/Soldier-Attack02.png</file>
+        <file alias="soldier_atk3.png">assets/Soldier-Attack03.png</file>
+        <file alias="soldier_hurt.png">assets/Soldier-Hurt.png</file>
+        <file alias="soldier_death.png">assets/Soldier-Death.png</file>
+        <file alias="orc_idle.png">assets/Orc-Idle.png</file>
+        <file alias="orc_walk.png">assets/Orc-Walk.png</file>
+        <file alias="orc_atk.png">assets/Orc-Attack01.png</file>
+        <file alias="orc_hurt.png">assets/Orc-Hurt.png</file>
+        <file alias="orc_death.png">assets/Orc-Death.png</file>
+        <file alias="arrow.png">assets/Arrow.png</file>
+        <file alias="boss_fireworm.png">assets/boss_fireworm_idle.png</file>
+        <file alias="boss_frostguardian.png">assets/boss_frostguardian_idle.png</file>
+        <file alias="boss_undead.png">assets/boss_undead_idle.png</file>
+        <file alias="boss_demonslime.png">assets/boss_demonslime_idle.png</file>
+        <file alias="boss_mino.png">assets/boss_mino_idle.png</file>
+    </qresource>
+</RCC>

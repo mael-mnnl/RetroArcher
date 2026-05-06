@@ -1,0 +1,10 @@
+# Qt build
+*.o
+moc_*
+qrc_*
+*.stash
+Makefile
+RetroArcher
+RetroArcher.exe
+*.app/
+build/
