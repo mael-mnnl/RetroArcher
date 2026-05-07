@@ -391,13 +391,15 @@ float GameWidget::soldierFps(AnimType anim) const {
 void GameWidget::loadSettings() {
     QSettings s("RetroArcher", "RetroArcher");
     m_highScore        = s.value("highScore", 0).toInt();
-    m_worldsUnlocked   = std::max(1, std::min(5, s.value("worldsUnlocked", 1).toInt()));
+    m_fragments        = std::max(0, std::min(5, s.value("fragments", 0).toInt()));
+    m_worldsUnlocked   = std::max(1, std::min(5, m_fragments + 1));
     m_menuSelectedSkin = s.value("skin", 0).toInt() % 4;
     m_menuSelectedAtk  = s.value("atk", 0).toInt() % 3;
 }
 void GameWidget::saveSettings() {
     QSettings s("RetroArcher", "RetroArcher");
     s.setValue("highScore", m_highScore);
+    s.setValue("fragments", m_fragments);
     s.setValue("worldsUnlocked", m_worldsUnlocked);
 }
 
@@ -430,6 +432,7 @@ void GameWidget::spawnMinion(float x, float y, int hp, float speed, EnemyType ty
 // ============================================================
 void GameWidget::startGame()
 {
+    m_tutorialActive = false;
     m_player = Player();
     m_player.skinIndex  = m_menuSelectedSkin;
     m_player.atkVariant = m_menuSelectedAtk;
@@ -512,6 +515,7 @@ void GameWidget::buildRoom(int roomIndex, int entryDoor)
         }
         m_enemies.push_back(boss);
         m_bossIndex = (int)m_enemies.size() - 1;
+        triggerBossDialog(worldIdx, 0);
         return;
     }
 
@@ -675,6 +679,14 @@ void GameWidget::updateGame(float dt)
     updateBullets(worldDt);
     updateParticles(dt);
 
+    // Dialog timers
+    if (m_dlgTimer > 0) m_dlgTimer -= dt;
+    if (m_dlgFadeIn > 0) m_dlgFadeIn -= dt;
+    if (m_cheatFlashTimer > 0) m_cheatFlashTimer -= dt;
+
+    // Tutoriel
+    if (m_tutorialActive) updateTutorial(dt);
+
     // SK_FIRE_TRAIL : laisse trainee de feu (en jeu)
     if (hasSkill(SK_FIRE_TRAIL) && m_player.moving && (int)(m_globalTime*8) % 2 == 0) {
         Particle p;
@@ -765,8 +777,8 @@ void GameWidget::updateGame(float dt)
             return;
         }
         m_state = GS_GameOver;
-        if (m_currentRoom > m_highScore) { m_highScore = m_currentRoom; }
-        saveSettings();
+        if (!m_cheatInvincible && !m_tutorialActive && m_currentRoom > m_highScore) m_highScore = m_currentRoom;
+        if (!m_cheatInvincible && !m_tutorialActive) saveSettings();
         return;
     }
 
@@ -774,18 +786,22 @@ void GameWidget::updateGame(float dt)
         bool anyAlive = false;
         for (auto &e : m_enemies) if (!e.dead) { anyAlive = true; break; }
         if (!anyAlive) {
+            // Pas de progression normale pendant le tutoriel
+            if (m_tutorialActive) return;
             // Boss tue ?
             if (isBossRoom(m_currentRoom)) {
                 m_player.bossesKilled++;
                 int worldCleared = worldOf(m_currentRoom);
-                if (worldCleared >= m_worldsUnlocked && m_worldsUnlocked < 5) {
-                    m_worldsUnlocked = worldCleared + 1;
+                if (!m_tutorialActive) {
+                    int newFragments = std::max(m_fragments, worldCleared);
+                    if (newFragments > m_fragments) m_fragments = newFragments;
+                    m_worldsUnlocked = std::max(m_worldsUnlocked, std::min(5, m_fragments + 1));
                     saveSettings();
                 }
                 if (isFinalBossRoom(m_currentRoom)) {
                     m_state = GS_Victory;
                     if (m_currentRoom > m_highScore) m_highScore = m_currentRoom;
-                    saveSettings();
+                    if (!m_tutorialActive) saveSettings();
                     return;
                 }
             }
@@ -1041,6 +1057,7 @@ void GameWidget::throwGrenade()
 // ============================================================
 void GameWidget::hurtPlayer(float d)
 {
+    if (m_cheatInvincible) return;
     if (m_player.invincibility > 0 || m_player.dashActive > 0) return;
     m_player.hp = std::max(0.f, m_player.hp - d);
     float invul = 0.8f;
@@ -1097,6 +1114,24 @@ void GameWidget::hurtEnemy(Enemy &e, float dmg, bool fromExplosion)
 
     if (e.hp <= 0) {
         e.dead = true; e.anim = AN_Death; e.animTimer = 0;
+
+        // Boss death dialog + fragment drop
+        if ((e.type == ET_MiniBoss || e.type == ET_FinalBoss) && !e.fragmentDropped) {
+            e.fragmentDropped = true;
+            triggerBossDialog(e.subType, 99);  // 99 = mort
+            // Particles fragment violet/dore
+            for (int i = 0; i < 40; ++i) {
+                float a = (i/40.f)*6.28f;
+                Particle pt; pt.x = e.x; pt.y = e.y;
+                pt.vx = std::cos(a)*rndF(60, 180);
+                pt.vy = std::sin(a)*rndF(60, 180) - 60;
+                pt.color = (i%3==0) ? QColor("#ffd544") :
+                           (i%3==1) ? QColor("#bb88ff") : QColor("#ffffff");
+                pt.life = pt.maxLife = rndF(0.8f, 1.6f);
+                pt.size = (int)rndF(4, 8); pt.noGravity = (i%2==0);
+                m_particles.push_back(pt);
+            }
+        }
 
         // Killstreak / FrostNova counts
         m_player.killStreakCount++;
@@ -1286,11 +1321,15 @@ void GameWidget::updateEnemies(float dt)
         else if (e.type == ET_MiniBoss || e.type == ET_FinalBoss) {
             // Phase progression
             if (e.type == ET_FinalBoss) {
+                int oldPhase = e.phase;
                 if (e.hp < e.maxHp*0.75f && e.phase==1) e.phase=2;
                 if (e.hp < e.maxHp*0.50f && e.phase==2) e.phase=3;
                 if (e.hp < e.maxHp*0.25f && e.phase==3) e.phase=4;
+                if (e.phase != oldPhase) triggerBossDialog(e.subType, e.phase);
             } else {
+                int oldPhase = e.phase;
                 if (e.hp < e.maxHp*0.5f && e.phase==1) e.phase=2;
+                if (e.phase != oldPhase) triggerBossDialog(e.subType, 1);
             }
 
             // Random move target
@@ -1777,9 +1816,31 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
     int k = event->key();
     m_keys.insert(k);
     if (m_state == GS_Menu) {
+        // Code de triche : focus sur la zone, taper chiffres puis Enter
+        if (m_cheatFocused) {
+            if (k == Qt::Key_Return || k == Qt::Key_Enter) {
+                tryValidateCheat();
+                m_cheatFocused = false;
+            } else if (k == Qt::Key_Escape) {
+                m_cheatFocused = false; m_cheatInput.clear();
+            } else if (k == Qt::Key_Backspace) {
+                if (!m_cheatInput.isEmpty()) m_cheatInput.chop(1);
+            } else if (m_cheatInput.size() < 10) {
+                QString t = event->text();
+                for (QChar ch : t) {
+                    if (ch.isLetterOrNumber()) m_cheatInput.append(ch);
+                }
+            }
+            return;
+        }
         if (k==Qt::Key_Space || k==Qt::Key_Return) startGame();
         else if (k==Qt::Key_C) m_state = GS_SkinSelect;
         else if (k==Qt::Key_D) { m_state = GS_Discoveries; m_discoveryHover = 0; }
+        else if (k==Qt::Key_T) startTutorial();
+        else if (k==Qt::Key_L) m_state = GS_Lore;
+        else if (k==Qt::Key_X) m_cheatFocused = true;   // Activer la zone code triche
+    } else if (m_state == GS_Lore) {
+        if (k==Qt::Key_Escape || k==Qt::Key_Return) m_state = GS_Menu;
     } else if (m_state == GS_SkinSelect) {
         if (k==Qt::Key_Left || k==Qt::Key_A) m_menuSelectedSkin = (m_menuSelectedSkin+3)%4;
         else if (k==Qt::Key_Right || k==Qt::Key_D) m_menuSelectedSkin = (m_menuSelectedSkin+1)%4;
@@ -1867,6 +1928,7 @@ void GameWidget::renderGame(QPainter &p)
     if (m_state == GS_Menu) { drawMenu(p); return; }
     if (m_state == GS_SkinSelect) { drawSkinSelect(p); return; }
     if (m_state == GS_Discoveries) { drawDiscoveries(p); return; }
+    if (m_state == GS_Lore) { drawLore(p); return; }
     drawRoom(p);
 
     // Particles
@@ -2006,6 +2068,8 @@ void GameWidget::renderGame(QPainter &p)
     }
 
     drawHUD(p);
+    drawDialogBubble(p);
+    drawTutorialOverlay(p);
 
     if (m_fadeAmount > 0) {
         QColor c(0,0,0); c.setAlphaF(std::min(1.f, m_fadeAmount));
@@ -2184,46 +2248,95 @@ void GameWidget::drawMenu(QPainter &p)
     }
 
     // Titre
-    QFont titleFont("monospace", 28, QFont::Bold);
+    QFont titleFont("monospace", 26, QFont::Bold);
     p.setFont(titleFont); QFontMetrics tfm(titleFont);
-    QString title = "RETRO ARCHER";
+    QString title = "ARCADEHERO";
     int tw = tfm.horizontalAdvance(title);
-    p.setPen(QColor(0,0,0)); p.drawText(CW/2 - tw/2 + 3, 70+3, title);
-    p.setPen(C_GOLD); p.drawText(CW/2 - tw/2, 70, title);
+    p.setPen(QColor(0,0,0)); p.drawText(CW/2 - tw/2 + 3, 50+3, title);
+    p.setPen(C_GOLD); p.drawText(CW/2 - tw/2, 50, title);
 
-    QFont subFont("monospace", 9);
+    QFont subFont("monospace", 8);
     p.setFont(subFont); QFontMetrics sfm(subFont);
-    QString sub = "5 mondes - 50 power-ups - 5 boss legendaires";
+    QString sub = "Reforge la Pierre d'Arcane - Heros Inconnu";
     p.setPen(QColor("#bbaaff"));
-    p.drawText(CW/2 - sfm.horizontalAdvance(sub)/2, 92, sub);
+    p.drawText(CW/2 - sfm.horizontalAdvance(sub)/2, 68, sub);
+
+    // Compteur de fragments (Pierre d'Arcane)
+    QFont ff("monospace", 9, QFont::Bold); p.setFont(ff); QFontMetrics ffm(ff);
+    QString frag = QString("Fragments  %1 / 5").arg(m_fragments);
+    p.setPen(QColor("#ffd544"));
+    int fragX = CW/2 - ffm.horizontalAdvance(frag)/2 - 14;
+    int fragY = 90;
+    p.drawText(fragX + 14, fragY, frag);
+    // Petite icone gemme animee
+    float pulse = 0.5f + 0.5f*std::sin(m_globalTime*3);
+    QColor gem(180+(int)(pulse*60), 130+(int)(pulse*80), 255);
+    QPolygonF gemP;
+    gemP << QPointF(fragX, fragY-6) << QPointF(fragX+5, fragY-12)
+         << QPointF(fragX+10, fragY-6) << QPointF(fragX+5, fragY+0);
+    p.setBrush(gem); p.setPen(QPen(QColor("#ffeeaa"), 1)); p.drawPolygon(gemP);
+    p.setPen(Qt::NoPen); p.setBrush(Qt::NoBrush);
 
     // Apercu sprite
     drawSpriteAt(p, m_sprSoldierSkin[m_menuSelectedSkin][AN_Idle], s_idleFrameCount, 8.f,
-                 CW/2.f, 165, 1.6f, false, m_globalTime);
+                 CW/2.f, 138, 1.4f, false, m_globalTime);
 
-    // Boutons (4)
+    // Boutons (5 lignes en colonne)
     auto drawBtn = [&](int y, const QString &key, const QString &label, QColor accent) {
-        QFont bf("monospace", 11, QFont::Bold); p.setFont(bf); QFontMetrics bfm(bf);
+        QFont bf("monospace", 10, QFont::Bold); p.setFont(bf); QFontMetrics bfm(bf);
         QString text = QString("[%1] %2").arg(key, label);
         int w = bfm.horizontalAdvance(text) + 24;
         int x = CW/2 - w/2;
-        QColor bg(20, 20, 40); p.fillRect(QRectF(x, y, w, 26), bg);
+        QColor bg(20, 20, 40); p.fillRect(QRectF(x, y, w, 22), bg);
         p.setPen(QPen(accent, 2)); p.setBrush(Qt::NoBrush);
-        p.drawRect(x, y, w, 26); p.setPen(Qt::NoPen);
-        p.setPen(accent); p.drawText(x+12, y+18, text); p.setPen(Qt::NoPen);
+        p.drawRect(x, y, w, 22); p.setPen(Qt::NoPen);
+        p.setPen(accent); p.drawText(x+12, y+15, text); p.setPen(Qt::NoPen);
     };
-    drawBtn(220, "ESPACE", "Jouer",         QColor("#88ff88"));
-    drawBtn(254, "C",      "Personnaliser", QColor("#ffaa44"));
-    drawBtn(288, "D",      "Decouvertes",   QColor("#aaccff"));
+    drawBtn(186, "ESPACE", "Aventure",       QColor("#88ff88"));
+    drawBtn(212, "T",      "Tutoriel",       QColor("#ffaa44"));
+    drawBtn(238, "C",      "Personnaliser",  QColor("#aaccff"));
+    drawBtn(264, "D",      "Decouvertes",    QColor("#bb88ff"));
+    drawBtn(290, "L",      "Lore",           QColor("#ddccaa"));
+
+    // Zone code de triche
+    int cy = 326;
+    QFont cf("monospace", 7, QFont::Bold); p.setFont(cf); QFontMetrics cfm(cf);
+    QColor cBorder = m_cheatFocused ? QColor("#ff66aa") : QColor("#5a4566");
+    p.fillRect(QRectF(CW/2-100, cy, 200, 22), QColor(15, 10, 22));
+    p.setPen(QPen(cBorder, m_cheatFocused?2:1)); p.setBrush(Qt::NoBrush);
+    p.drawRect(QRectF(CW/2-100, cy, 200, 22)); p.setPen(Qt::NoPen);
+    p.setPen(QColor("#ff88cc"));
+    p.drawText(CW/2-94, cy+9, "[X] Code de triche");
+    QString prompt = "> " + m_cheatInput;
+    if (m_cheatFocused && (int)(m_globalTime*2)%2==0) prompt += "_";
+    p.setPen(QColor("#ffeeaa"));
+    p.drawText(CW/2-94, cy+19, prompt);
+    if (m_cheatFocused) {
+        QFont hf("monospace", 6); p.setFont(hf); QFontMetrics hfm(hf);
+        QString hint = "ENTREE pour valider, ESC pour annuler";
+        p.setPen(QColor("#aa88aa"));
+        p.drawText(CW/2 - hfm.horizontalAdvance(hint)/2, cy+30, hint);
+    }
+    if (m_cheatInvincible) {
+        QFont sf("monospace", 7, QFont::Bold); p.setFont(sf); QFontMetrics sfmx(sf);
+        QString s = "★ INVINCIBLE ACTIF ★";
+        p.setPen(QColor("#ff44aa"));
+        p.drawText(CW/2 - sfmx.horizontalAdvance(s)/2, cy+38, s);
+    }
+    if (m_cheatFlashTimer > 0) {
+        QFont sf("monospace", 8, QFont::Bold); p.setFont(sf); QFontMetrics sfmx(sf);
+        QString s = "Code accepte !";
+        QColor cc("#ffd544"); cc.setAlphaF(std::min(1.f, m_cheatFlashTimer));
+        p.setPen(cc);
+        p.drawText(CW/2 - sfmx.horizontalAdvance(s)/2, cy-4, s);
+    }
 
     // Stats bas
-    QFont mf("monospace", 8); p.setFont(mf);
+    QFont mf("monospace", 7); p.setFont(mf); QFontMetrics mfm(mf);
     p.setPen(QColor("#ffd544"));
-    QString hsTxt = QString("Record : Salle %1/%2  -  Mondes debloques : %3/5")
-                    .arg(m_highScore).arg(ROOMS_TOTAL).arg(m_worldsUnlocked);
-    QFontMetrics mfm(mf);
+    QString hsTxt = QString("Record salle %1/%2").arg(m_highScore).arg(ROOMS_TOTAL);
     p.drawText(CW/2 - mfm.horizontalAdvance(hsTxt)/2, CH-20, hsTxt);
-    QString controls = "ZQSD : Bouger  -  Tirs auto si immobile  -  ESC : retour";
+    QString controls = "ZQSD bouger - tirs auto immobile - SHIFT/T/G actions - ESC retour";
     p.setPen(QColor("#7766aa"));
     p.drawText(CW/2 - mfm.horizontalAdvance(controls)/2, CH-8, controls);
 }
@@ -2249,8 +2362,8 @@ void GameWidget::drawDiscoveries(QPainter &p)
     p.setPen(C_GOLD); p.drawText(CW/2 - tw/2, 24, title);
 
     QFont sub("monospace", 8); p.setFont(sub); QFontMetrics sfm(sub);
-    QString s = QString("Mondes debloques : %1 / 5").arg(m_worldsUnlocked);
-    p.setPen(QColor("#bbaaff"));
+    QString s = QString("Fragments d'Arcane : %1 / 5  -  Mondes debloques : %2 / 5").arg(m_fragments).arg(m_worldsUnlocked);
+    p.setPen(QColor("#ffd544"));
     p.drawText(CW/2 - sfm.horizontalAdvance(s)/2, 38, s);
 
     // 5 cards horizontales
@@ -2519,3 +2632,318 @@ void GameWidget::drawEndScreen(QPainter &p, bool win)
     p.setPen(QColor("#88ff88"));
     p.drawText(CW/2 - sfm.horizontalAdvance(r)/2, CH/2 + 50, r);
 }
+
+// ============================================================
+//  CHEAT INPUT
+// ============================================================
+void GameWidget::tryValidateCheat()
+{
+    if (m_cheatInput == "123") {
+        m_cheatInvincible = true;
+        m_cheatFlashTimer = 2.5f;
+    } else if (m_cheatInput == "0") {
+        m_cheatInvincible = false;
+        m_cheatFlashTimer = 1.5f;
+    } else if (m_cheatInput == "999") {
+        // bonus : debloquer tous les fragments
+        m_fragments = 5;
+        m_worldsUnlocked = 5;
+        saveSettings();
+        m_cheatFlashTimer = 2.5f;
+    }
+    m_cheatInput.clear();
+}
+
+// ============================================================
+//  BOSS DIALOG
+// ============================================================
+void GameWidget::scheduleDialog(const QString &speaker, const QString &text, float dur, QColor color)
+{
+    m_dlgSpeaker = speaker;
+    m_dlgText = text;
+    m_dlgTimer = dur;
+    m_dlgColor = color;
+    m_dlgFadeIn = 0.25f;
+}
+
+void GameWidget::triggerBossDialog(int subType, int stage)
+{
+    // Dialogues lies au LORE
+    static const char* dlgIntro[5] = {
+        "Tu oses defier la Forge ardente, mortel ? Mon fragment te brulera.",
+        "Mes serviteurs des catacombes ont faim... viens nourrir leurs os.",
+        "Tu sens cette puanteur ? C'est le pouvoir de mon fragment qui te ronge.",
+        "Aucun n'a quitte cette arene vivant. Mon fragment restera mien.",
+        "Lord Malificus m'a confie ce fragment. Tu mourras gele, Heros."
+    };
+    static const char* dlgPhase[5][4] = {
+        // phase 1->2 (5 bosses)
+        {"Tu m'as touche ? Brule donc dans mes braises !", "", "", ""},
+        {"L'eternite m'appartient ! Mes legions ! VENEZ !", "", "", ""},
+        {"Sa-saviez vous que je peux me dedoubler ? Hahaha !", "", "", ""},
+        {"AAAARGH ! TU VAS PAYER POUR CETTE INSULTE !", "", "", ""},
+        // Gardien : 4 phases
+        {"Tu progresses... le Gardien doit eveiller sa fureur.",
+         "Le froid t'envahit. Je vais convoquer mes spectres.",
+         "TES PAS S'ARRETERONT ICI ! GLACE ETERNELLE !",
+         "PHASE FINALE ! POUR LORD MALIFICUS !"}
+    };
+    static const char* dlgDeath[5] = {
+        "Le fragment... s'echappe... que la Forge s'eteigne...",
+        "Mes os... se dispersent... le fragment est tien...",
+        "Comment... un mortel... peut-il... aaarrrgh...",
+        "Tu... tu m'as... vaincu... prends... le fragment...",
+        "Lord Malificus... pardonnez-moi... le fragment... vous attend..."
+    };
+
+    if (subType < 0 || subType >= 5) return;
+    QString speaker = m_worlds[subType].bossNameFr.toUpper();
+    QColor col = m_worlds[subType].accent;
+
+    if (stage == 0) {
+        scheduleDialog(speaker, QString::fromUtf8(dlgIntro[subType]), 4.5f, col);
+    } else if (stage == 99) {
+        scheduleDialog(speaker, QString::fromUtf8(dlgDeath[subType]), 3.5f, col);
+    } else if (subType == 4 && stage >= 2 && stage <= 4) {
+        scheduleDialog(speaker, QString::fromUtf8(dlgPhase[4][stage-1]), 3.0f, col);
+    } else if (stage == 1) {
+        scheduleDialog(speaker, QString::fromUtf8(dlgPhase[subType][0]), 3.0f, col);
+    }
+}
+
+void GameWidget::drawDialogBubble(QPainter &p)
+{
+    if (m_dlgTimer <= 0) return;
+    QFont nf("monospace", 8, QFont::Bold);
+    QFont tf("monospace", 8);
+    QFontMetrics nfm(nf), tfm(tf);
+
+    // Word wrap
+    QStringList words = m_dlgText.split(' ');
+    QStringList lines;
+    QString cur;
+    int maxW = GW - 60;
+    for (auto &w : words) {
+        QString test = cur.isEmpty() ? w : cur + " " + w;
+        if (tfm.horizontalAdvance(test) > maxW) {
+            lines << cur;
+            cur = w;
+        } else cur = test;
+    }
+    if (!cur.isEmpty()) lines << cur;
+
+    int boxH = 18 + (int)lines.size() * 12 + 4;
+    int boxW = maxW + 20;
+    int x = GW/2 - boxW/2, y = 14;
+
+    // Fade in/out
+    float fadeIn = std::min(1.f, std::max(0.f, 1.f - m_dlgFadeIn / 0.25f));
+    float fadeOut = std::min(1.f, m_dlgTimer / 0.4f);
+    float alpha = std::min(fadeIn, fadeOut);
+
+    QColor bg(15, 8, 22); bg.setAlphaF(0.92f * alpha);
+    p.fillRect(QRectF(x, y, boxW, boxH), bg);
+    QColor border = m_dlgColor; border.setAlphaF(alpha);
+    p.setPen(QPen(border, 2)); p.setBrush(Qt::NoBrush);
+    p.drawRect(x, y, boxW, boxH); p.setPen(Qt::NoPen);
+
+    p.setFont(nf);
+    QColor sp = m_dlgColor; sp.setAlphaF(alpha);
+    p.setPen(sp);
+    p.drawText(x + 8, y + 13, m_dlgSpeaker);
+
+    p.setFont(tf);
+    QColor tc("#eeddff"); tc.setAlphaF(alpha);
+    p.setPen(tc);
+    int ly = y + 26;
+    for (auto &line : lines) { p.drawText(x + 8, ly, line); ly += 12; }
+    p.setPen(Qt::NoPen);
+}
+
+// ============================================================
+//  TUTORIAL
+// ============================================================
+void GameWidget::startTutorial()
+{
+    m_tutorialActive = true;
+    m_tutStep = 0;
+    m_tutAdvanceCd = 0;
+    m_player = Player();
+    m_player.skinIndex = m_menuSelectedSkin;
+    m_player.atkVariant = m_menuSelectedAtk;
+    m_player.x = GW/2.f; m_player.y = GH/2.f;
+    m_enemies.clear(); m_bullets.clear(); m_particles.clear();
+    m_currentRoom = 1; m_bossIndex = -1;
+    for (int i=0;i<4;++i) m_doorOpen[i] = false;
+    buildTutorialRoom(0);
+    m_state = GS_Playing;
+    scheduleDialog("HEROS INCONNU",
+                   "Eveille-toi. Tu portes le Fragment initial. ZQSD pour bouger.",
+                   5.f, QColor("#ffd544"));
+}
+
+void GameWidget::buildTutorialRoom(int step)
+{
+    m_enemies.clear(); m_bullets.clear();
+    m_bossIndex = -1;
+    for (int i=0;i<4;++i) m_doorOpen[i] = false;
+    m_player.invincibility = 1.5f;
+
+    if (step == 0) {
+        // Salle vide
+    } else if (step == 1) {
+        // 1 slime simple
+        Enemy e; e.id = m_nextEnemyId++;
+        e.x = GW*0.75f; e.y = GH*0.5f;
+        e.type = ET_Slime; e.hp = e.maxHp = 12; e.speed = 30; e.size = 32;
+        e.anim = AN_Walk;
+        m_enemies.push_back(e);
+    } else if (step == 2) {
+        // 2 slimes + 1 skel
+        for (int i=0;i<2;++i) {
+            Enemy e; e.id = m_nextEnemyId++;
+            e.x = GW*(0.6f+i*0.15f); e.y = GH*(0.3f+i*0.4f);
+            e.type = ET_Slime; e.hp = e.maxHp = 18; e.speed = 40; e.size = 32;
+            e.anim = AN_Walk;
+            m_enemies.push_back(e);
+        }
+        Enemy s; s.id = m_nextEnemyId++;
+        s.x = GW*0.85f; s.y = GH*0.5f;
+        s.type = ET_Skel; s.hp = s.maxHp = 28; s.speed = 35; s.size = 32;
+        s.shootCd = 2.f; s.anim = AN_Walk;
+        m_enemies.push_back(s);
+    } else if (step == 3) {
+        // Mini-boss tutoriel : Ver de Feu version douce
+        Enemy boss;
+        boss.id = m_nextEnemyId++;
+        boss.x = GW/2.f; boss.y = GH*0.4f;
+        boss.subType = 0;
+        boss.hp = boss.maxHp = 100;
+        boss.speed = 45; boss.damage = 1; boss.size = 60;
+        boss.shootCd = 1.6f; boss.burstCd = 7;
+        boss.chargeCd = 7.f;
+        boss.type = ET_MiniBoss;
+        boss.moveTargetX = boss.x; boss.moveTargetY = boss.y;
+        m_enemies.push_back(boss);
+        m_bossIndex = (int)m_enemies.size()-1;
+    }
+}
+
+void GameWidget::updateTutorial(float dt)
+{
+    m_tutAdvanceCd -= dt;
+    bool anyAlive = false;
+    for (auto &e : m_enemies) if (!e.dead) { anyAlive = true; break; }
+
+    if (m_tutStep == 0) {
+        // Attente : que le joueur bouge
+        if (m_player.moving && m_tutAdvanceCd <= 0) {
+            scheduleDialog("HEROS INCONNU",
+                "Bien. Reste maintenant immobile : tu tires automatiquement vers les ennemis.",
+                4.5f, QColor("#ffd544"));
+            m_tutStep = 1; m_tutAdvanceCd = 1.5f;
+            buildTutorialRoom(1);
+        }
+    } else if (m_tutStep == 1) {
+        if (!anyAlive && m_tutAdvanceCd <= 0) {
+            scheduleDialog("HEROS INCONNU",
+                "Tuer des ennemis te soigne parfois. Affronte ce groupe !",
+                4.0f, QColor("#88ff88"));
+            m_tutStep = 2; m_tutAdvanceCd = 1.5f;
+            buildTutorialRoom(2);
+        }
+    } else if (m_tutStep == 2) {
+        if (!anyAlive && m_tutAdvanceCd <= 0) {
+            scheduleDialog("HEROS INCONNU",
+                "Voici un boss en miniature. Vaincs-le pour clore l'entrainement !",
+                4.0f, QColor("#ff7733"));
+            m_tutStep = 3; m_tutAdvanceCd = 1.5f;
+            buildTutorialRoom(3);
+        }
+    } else if (m_tutStep == 3) {
+        if (!anyAlive && m_tutAdvanceCd <= 0) {
+            scheduleDialog("HEROS INCONNU",
+                "Felicitations Heros Inconnu. Tu maitrises l'essentiel. La quete commence !",
+                5.0f, QColor("#ffd544"));
+            m_tutStep = 4;
+            m_tutAdvanceCd = 5.5f;
+        }
+    } else if (m_tutStep == 4) {
+        if (m_tutAdvanceCd <= 0) {
+            // Retour menu
+            m_tutorialActive = false;
+            m_state = GS_Menu;
+        }
+    }
+}
+
+void GameWidget::drawTutorialOverlay(QPainter &p)
+{
+    if (!m_tutorialActive) return;
+    QFont sf("monospace", 7, QFont::Bold); p.setFont(sf); QFontMetrics sfm(sf);
+    QString tag = QString("TUTORIEL  -  Etape %1/4").arg(std::min(4, m_tutStep+1));
+    int tw = sfm.horizontalAdvance(tag);
+    QColor bg(0,0,0,180); p.fillRect(QRectF(GW-tw-12, 4, tw+8, 12), bg);
+    p.setPen(QColor("#ffd544"));
+    p.drawText(GW-tw-8, 13, tag);
+    p.setPen(Qt::NoPen);
+}
+
+// ============================================================
+//  LORE SCREEN
+// ============================================================
+void GameWidget::drawLore(QPainter &p)
+{
+    p.fillRect(0, 0, CW, CH, QColor(8, 5, 20));
+    // Etoiles
+    QRandomGenerator starRng(54321);
+    for (int i = 0; i < 100; ++i) {
+        float sx = starRng.bounded(CW), sy = starRng.bounded(CH);
+        int alpha = 60 + (int)(std::sin(m_globalTime*1.2f + i*0.3f)*50);
+        QColor sc((i%3==0)?"#bbaaff":"#ffeebb"); sc.setAlpha(std::max(0, std::min(255, alpha)));
+        p.fillRect(QRectF(sx, sy, 2, 2), sc);
+    }
+
+    QFont titleFont("monospace", 14, QFont::Bold);
+    p.setFont(titleFont); QFontMetrics tfm(titleFont);
+    QString title = "LE LORE D'ARCADEHERO";
+    int tw = tfm.horizontalAdvance(title);
+    p.setPen(C_GOLD); p.drawText(CW/2 - tw/2, 26, title);
+
+    QFont bf("monospace", 8); p.setFont(bf); QFontMetrics bfm(bf);
+    p.setPen(QColor("#ddccff"));
+    QStringList paragraphs = {
+        QString::fromUtf8("Le monde n'est plus qu'un tissu dechire. Lord Malificus, tyran des"),
+        QString::fromUtf8("abysses, a derobe la Pierre d'Arcane qui scellait l'equilibre cosmique."),
+        QString::fromUtf8("L'artefact a explose en fragments et l'univers s'est brise."),
+        "",
+        QString::fromUtf8("Tu es le Heros Inconnu. La volonte residuelle de la Pierre s'est"),
+        QString::fromUtf8("refugiee dans ton ame, te conferant un Fragment initial - une cle qui"),
+        QString::fromUtf8("absorbe la puissance des autres fragments quand tu les recuperes."),
+        "",
+        QString::fromUtf8("Cinq entites corrompues gardent jalousement les fragments majeurs"),
+        QString::fromUtf8("dans des biomes extremes : forge ardente, catacombes, marais maudit,"),
+        QString::fromUtf8("arene de l'anneau et citadelle gelee."),
+        "",
+        QString::fromUtf8("Chaque fragment recupere debloque ta memoire magique : de nouveaux"),
+        QString::fromUtf8("schemas d'energie se revelent dans tes armes. Reunis-les tous pour"),
+        QString::fromUtf8("reforger la Pierre et sceller les failles dimensionnelles.")
+    };
+    int y = 56;
+    for (auto &line : paragraphs) {
+        if (line.isEmpty()) { y += 6; continue; }
+        p.drawText(CW/2 - bfm.horizontalAdvance(line)/2, y, line);
+        y += 14;
+    }
+
+    QFont qf("monospace", 10, QFont::Bold); p.setFont(qf); QFontMetrics qfm(qf);
+    QString quete = QString("Fragments en ta possession : %1 / 5").arg(m_fragments);
+    p.setPen(C_GOLD);
+    p.drawText(CW/2 - qfm.horizontalAdvance(quete)/2, y+12, quete);
+
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString footer = "ESC : retour";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(footer)/2, CH-12, footer);
+}
+

@@ -20,7 +20,8 @@ enum EnemyType {
 enum AnimType { AN_Idle, AN_Walk, AN_Atk, AN_Hurt, AN_Death };
 
 enum GameState {
-    GS_Menu, GS_SkinSelect, GS_Discoveries,
+    GS_Menu, GS_SkinSelect, GS_Discoveries, GS_Lore,
+    GS_Tutorial,
     GS_Playing, GS_RoomCleared, GS_FadeOut, GS_SkillSelect, GS_FadeIn,
     GS_GameOver, GS_Victory
 };
@@ -98,6 +99,8 @@ struct Enemy {
     float chargeT = 0;
     float summonCd = 0;
     float trailCd = 0;
+    bool  fragmentDropped = false;
+    int   dialogStage = 0;       // 0=intro, 1=phase change, 2=death (used)
 };
 
 struct Player {
@@ -231,14 +234,29 @@ private:
     void drawSkinSelect(QPainter &p);
     void drawSkillSelect(QPainter &p);
     void drawDiscoveries(QPainter &p);
+    void drawLore(QPainter &p);
     void drawEndScreen(QPainter &p, bool win);
     void drawProgressionBar(QPainter &p, int x, int y, int w);
     void drawSpriteAt(QPainter &p, const QImage &sheet, int frameCount, float fps,
                       float x, float y, float scale, bool flipX, float timer);
     void drawBossInGame(QPainter &p, const Enemy &boss, float scaleMul);
+    void drawDialogBubble(QPainter &p);
+    void drawTutorialOverlay(QPainter &p);
     QImage soldierSheet(AnimType anim) const;
     int    soldierFrameCount(AnimType anim) const;
     float  soldierFps(AnimType anim) const;
+
+    // Boss dialog
+    void scheduleDialog(const QString &speaker, const QString &text, float dur, QColor color);
+    void triggerBossDialog(int subType, int stage);
+
+    // Tutorial
+    void startTutorial();
+    void buildTutorialRoom(int step);
+    void updateTutorial(float dt);
+
+    // Cheats
+    void tryValidateCheat();
 
     GameState m_state = GS_Menu;
     int m_currentRoom = 1;
@@ -266,8 +284,27 @@ private:
 
     int m_highScore = 0;
     int m_worldsUnlocked = 1;
+    int m_fragments = 0;            // Pierre d'Arcane recoltes
     int m_menuSelectedSkin = 0;
     int m_menuSelectedAtk = 0;
+
+    // Cheats
+    bool m_cheatInvincible = false;
+    QString m_cheatInput;
+    float m_cheatFlashTimer = 0;
+    bool m_cheatFocused = false;
+
+    // Tutorial
+    int   m_tutStep = 0;
+    bool  m_tutorialActive = false;
+    float m_tutAdvanceCd = 0;
+
+    // Boss dialog overlay
+    QString m_dlgSpeaker;
+    QString m_dlgText;
+    QColor  m_dlgColor;
+    float   m_dlgTimer = 0;
+    float   m_dlgFadeIn = 0;
 
     QImage m_sprSoldierBase[5];
     QImage m_sprSoldierAtkVariants[3];
