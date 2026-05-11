@@ -18,5 +18,17 @@
         <file alias="boss_undead.png">assets/boss_undead_idle.png</file>
         <file alias="boss_demonslime.png">assets/boss_demonslime_idle.png</file>
         <file alias="boss_mino.png">assets/boss_mino_idle.png</file>
+        <file alias="boss_malificus.png">assets/lord_malificus.png</file>
+        <file alias="elite_red.png">assets/elite/elite_red.png</file>
+        <file alias="elite_classic.png">assets/elite/elite_classic.png</file>
+        <file alias="elite_spike.png">assets/elite/elite_spike.png</file>
+        <file alias="elite_eyes.png">assets/elite/elite_eyes.png</file>
+        <file alias="fx_fire.png">assets/fx/fx_fire.png</file>
+        <file alias="fx_portal.png">assets/fx/fx_portal.png</file>
+        <file alias="fx_sparkle.png">assets/fx/fx_sparkle.png</file>
+        <file alias="fx_explosion.png">assets/fx/fx_explosion.png</file>
+        <file alias="fx_ice.png">assets/fx/fx_ice.png</file>
+        <file alias="fx_poison.png">assets/fx/fx_poison.png</file>
+        <file alias="fx_void.png">assets/fx/fx_void.png</file>
     </qresource>
 </RCC>

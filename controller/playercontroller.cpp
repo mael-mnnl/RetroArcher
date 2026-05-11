@@ -2,6 +2,8 @@
 #include "combatsystem.h"
 #include "skillsystem.h"
 #include "collisionsystem.h"
+#include "cursesystem.h"
+#include "relicsystem.h"
 #include "../model/gamemodel.h"
 #include "../core/utils.h"
 #include "../core/constants.h"
@@ -83,7 +85,16 @@ void update(GameModel &m, float dt)
     }
     if (m.keys.contains(Qt::Key_Shift) && Skills::hasSkill(m, SK_DASH)
         && pl.dashCd <= 0 && pl.dashActive <= 0) {
+        // Si visée (clic souris memorisé), dasher vers ce point
+        if (pl.hasDashAim) {
+            float ang = std::atan2(pl.dashAimY - pl.y, pl.dashAimX - pl.x);
+            pl.facing = ang;
+            pl.facingLeft = std::cos(ang) < 0;
+            pl.hasDashAim = false;
+        }
         Combat::activateDash(m);
+        // Curse SlowDash : double le cd
+        pl.dashCd *= Curse::dashCdMul(m);
     }
     if (m.keys.contains(Qt::Key_T) && Skills::hasSkill(m, SK_TIME_STOP) && !pl.timeStopUsed) {
         Combat::activateTimeStop(m);
@@ -98,7 +109,7 @@ void update(GameModel &m, float dt)
                     pl.shieldReadyTimer = 12.f; pl.invincibility = 1.f; break;
                 }
                 if (Skills::hasSkill(m, SK_THORNS)) Combat::hurtEnemy(m, e, e.damage * 0.5f);
-                Combat::hurtPlayer(m, e.damage * Skills::incomingDmgMul(m));
+                Combat::hurtPlayer(m, e.damage * Skills::incomingDmgMul(m) * Curse::playerIncomingMul(m));
                 break;
             }
         }
@@ -115,7 +126,7 @@ void update(GameModel &m, float dt)
                     pl.shieldReadyTimer = 12.f; pl.invincibility = 1.f; b.dead = true; break;
                 }
                 b.dead = true;
-                Combat::hurtPlayer(m, b.damage * Skills::incomingDmgMul(m));
+                Combat::hurtPlayer(m, b.damage * Skills::incomingDmgMul(m) * Curse::playerIncomingMul(m));
             }
         }
     }

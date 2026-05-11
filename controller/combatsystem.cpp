@@ -2,6 +2,10 @@
 #include "skillsystem.h"
 #include "collisionsystem.h"
 #include "dialogsystem.h"
+#include "pickupsystem.h"
+#include "scoresystem.h"
+#include "relicsystem.h"
+#include "cursesystem.h"
 #include "../model/gamemodel.h"
 #include "../model/types.h"
 #include "../core/utils.h"
@@ -45,7 +49,7 @@ void shootPlayer(GameModel &m)
     float speed = 320.f;
     if (Skills::hasSkill(m, SK_RANGE)) speed *= 1.30f;
 
-    float dmg = pl.damage * Skills::damageMul(m);
+    float dmg = pl.damage * Skills::damageMul(m) * Relic::damageDealtMul(m);
     if (Skills::hasSkill(m, SK_HUNTER) && nd > 200.f) dmg *= 1.25f;
     if (Skills::hasSkill(m, SK_DEATH_MARK) && pl.nextEnemyMarked == near->id) {
         dmg *= 1.30f; pl.nextEnemyMarked = -1;
@@ -189,7 +193,25 @@ void hurtEnemy(GameModel &m, Enemy &e, float dmg, bool fromExplosion)
     if (e.hp <= 0) {
         e.dead = true; e.anim = AN_Death; e.animTimer = 0;
 
-        if ((e.type == ET_MiniBoss || e.type == ET_FinalBoss) && !e.fragmentDropped) {
+        // BloodOrb : +0.5 PV tous les 2 kills
+        if (Relic::has(m, REL_BloodOrb)) {
+            static int killAcc = 0; killAcc++;
+            if (killAcc % 2 == 0) m.player.hp = std::min(m.player.maxHp, m.player.hp + 1.f);
+        }
+
+        // Score popup + streak
+        Score::onKill(m);
+
+        // Drop loot (pas pour les boss qui ont leur propre logique fragment)
+        if (e.type < ET_MiniBoss) Pickup::tryRandomDrop(m, e.x, e.y, e.elite);
+        if (e.elite) {
+            // Drop garanti
+            Pickup::spawnChest(m, e.x, e.y);
+            Pickup::spawnGold(m, e.x + Core::rndF(-15,15), e.y, 20);
+        }
+
+        if ((e.type == ET_MiniBoss || e.type == ET_FinalBoss || e.type == ET_TrueFinalBoss)
+            && !e.fragmentDropped) {
             e.fragmentDropped = true;
             Dialog::triggerBoss(m, e.subType, 99);
             for (int i = 0; i < 40; ++i) {

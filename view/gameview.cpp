@@ -47,10 +47,17 @@ void GameView::drawBossInGame(QPainter &p, const GameModel &m, const Enemy &boss
     if (sheet.isNull()) return;
     int fc = wi.bossFrameCount;
     int fw = wi.bossFrameW, fh = wi.bossFrameH;
-    int frame = (int)(boss.animTimer * wi.bossFps) % fc;
+    int frame = (fc > 0) ? ((int)(boss.animTimer * wi.bossFps) % fc) : 0;
     float scale = (boss.size / 60.f) * 0.85f * scaleMul;
+    // Lord Malificus : sprite 64x96 unique, plus gros
+    if (boss.type == ET_TrueFinalBoss) scale = (boss.size / 64.f) * 1.05f * scaleMul;
     float dw = fw*scale, dh = fh*scale;
     float dx = boss.x - dw/2.f, dy = boss.y - dh*0.6f;
+    // Aura violette pour Malificus
+    if (boss.type == ET_TrueFinalBoss && !boss.dead) {
+        QColor aura(180, 60, 220, 70 + (int)(std::sin(m.globalTime*3)*30));
+        p.fillRect(QRectF(dx-4, dy-4, dw+8, dh+8), aura);
+    }
     p.save();
     if (boss.facingLeft) {
         p.translate(int(boss.x), 0); p.scale(-1, 1);
@@ -63,21 +70,65 @@ void GameView::drawBossInGame(QPainter &p, const GameModel &m, const Enemy &boss
 
 void GameView::drawRoom(QPainter &p, const GameModel &m)
 {
+    // Couleurs de sol selon biome
+    int wi = std::min(6, ((m.currentRoom-1)/5)+1) - 1;
+    QColor fl1, fl2, wt, wf;
+    switch (wi) {
+        case 0: fl1=QColor("#3a2008"); fl2=QColor("#2a1606"); wt=QColor("#4d1808"); wf=QColor("#260a04"); break; // Forge
+        case 1: fl1=QColor("#2a2640"); fl2=QColor("#1f1d30"); wt=QColor("#3a3858"); wf=QColor("#1e1c30"); break; // Catacombes
+        case 2: fl1=QColor("#1a3a22"); fl2=QColor("#143018"); wt=QColor("#23502c"); wf=QColor("#0e2614"); break; // Marais
+        case 3: fl1=QColor("#4a3a1a"); fl2=QColor("#3a2c10"); wt=QColor("#553e1a"); wf=QColor("#2a1d08"); break; // Arene
+        case 4: fl1=QColor("#1c3a4a"); fl2=QColor("#142a38"); wt=QColor("#2c4a5c"); wf=QColor("#0f2030"); break; // Citadelle
+        default:fl1=QColor("#2a1230"); fl2=QColor("#1a081c"); wt=QColor("#3a1a40"); wf=QColor("#1a0a22"); break; // Abysses
+    }
+    // Sol damier + petits motifs aléatoires (semi-procédural stable par room)
+    quint32 seed = (quint32)(m.currentRoom * 1009);
     for (int r=1; r<ROWS-1; ++r) for (int c=1; c<COLS-1; ++c) {
         int x = c*TILE, y = r*TILE;
-        p.fillRect(x, y, TILE, TILE, ((r+c)%2==0)?C_FL1:C_FL2);
+        p.fillRect(x, y, TILE, TILE, ((r+c)%2==0)?fl1:fl2);
+        // Motif rare : crack/fissure
+        if (((c*7919 + r*1031 + seed) % 31) == 5) {
+            QColor accent = fl1.lighter(115);
+            p.fillRect(QRectF(x+8, y+12, 4, 1), accent);
+            p.fillRect(QRectF(x+12, y+12, 1, 6), accent);
+            p.fillRect(QRectF(x+12, y+18, 5, 1), accent);
+        }
     }
+    // Murs périphériques
     for (int c=0; c<COLS; ++c) {
-        p.fillRect(c*TILE, 0, TILE, TILE, C_WT);
-        p.fillRect(c*TILE, TILE-8, TILE, 8, C_WF);
-        p.fillRect(c*TILE, (ROWS-1)*TILE, TILE, TILE, C_WT);
-        p.fillRect(c*TILE, (ROWS-1)*TILE, TILE, 8, C_WF);
+        p.fillRect(c*TILE, 0, TILE, TILE, wt);
+        p.fillRect(c*TILE, TILE-8, TILE, 8, wf);
+        p.fillRect(c*TILE, (ROWS-1)*TILE, TILE, TILE, wt);
+        p.fillRect(c*TILE, (ROWS-1)*TILE, TILE, 8, wf);
     }
     for (int r=0; r<ROWS; ++r) {
-        p.fillRect(0, r*TILE, TILE, TILE, C_WT);
-        p.fillRect(TILE-8, r*TILE, 8, TILE, C_WF);
-        p.fillRect((COLS-1)*TILE, r*TILE, TILE, TILE, C_WT);
-        p.fillRect((COLS-1)*TILE, r*TILE, 8, TILE, C_WF);
+        p.fillRect(0, r*TILE, TILE, TILE, wt);
+        p.fillRect(TILE-8, r*TILE, 8, TILE, wf);
+        p.fillRect((COLS-1)*TILE, r*TILE, TILE, TILE, wt);
+        p.fillRect((COLS-1)*TILE, r*TILE, 8, TILE, wf);
+    }
+    // Obstacles intérieurs
+    for (auto &o : m.obstacles) {
+        int x = o.col*TILE, y = o.row*TILE;
+        if (o.kind == 0) { // pilier
+            p.fillRect(x+4, y+4, TILE-8, TILE-8, wt);
+            p.fillRect(x+6, y+6, TILE-12, TILE-12, wt.darker(130));
+            p.fillRect(x+8, y+8, 4, TILE-16, wt.lighter(125));
+        } else if (o.kind == 1) { // caisse
+            p.fillRect(x+5, y+6, TILE-10, TILE-10, QColor("#6a4a2a"));
+            p.fillRect(x+5, y+6, TILE-10, 2, QColor("#8a6a3a"));
+            p.fillRect(x+5, y+6, 2, TILE-10, QColor("#8a6a3a"));
+            p.setPen(QPen(QColor("#3a2010"), 1)); p.setBrush(Qt::NoBrush);
+            p.drawRect(x+5, y+6, TILE-10, TILE-10); p.setPen(Qt::NoPen);
+        } else { // brasero animé
+            p.fillRect(x+10, y+12, TILE-20, TILE-16, QColor("#3a2010"));
+            float ph = std::sin(m.globalTime*6 + o.col*0.7f + o.row*0.5f);
+            int sz = 6 + int(ph*3);
+            p.fillRect(QRectF(x+TILE/2-sz/2.f, y+6, sz, sz),
+                       (wi==4) ? QColor("#88ccff") : QColor("#ff6622"));
+            p.fillRect(QRectF(x+TILE/2-sz/4.f, y+8, sz/2, sz/2),
+                       (wi==4) ? QColor("#ddeeff") : QColor("#ffee88"));
+        }
     }
     auto drawDoor = [&](int col, int row, bool open) {
         int x = col*TILE, y = row*TILE;
@@ -95,6 +146,26 @@ void GameView::drawRoom(QPainter &p, const GameModel &m)
     drawDoor(COLS-1, DOOR_ROW, m.doorOpen[1]);
     drawDoor(DOOR_COL, ROWS-1, m.doorOpen[2]);
     drawDoor(0, DOOR_ROW, m.doorOpen[3]);
+
+    // Indicateur de salle spéciale (label discret en haut)
+    if (m.roomType != RT_Normal && m.roomType != RT_Boss) {
+        QFont rf("monospace", 7, QFont::Bold);
+        p.setFont(rf); QFontMetrics rfm(rf);
+        QString label;
+        QColor lcol = QColor("#ffd544");
+        switch (m.roomType) {
+            case RT_Elite:     label="* SALLE D'ELITE *"; lcol=QColor("#ff6644"); break;
+            case RT_Shop:      label="MARCHAND"; lcol=QColor("#44ddaa"); break;
+            case RT_Forge:     label="FORGE"; lcol=QColor("#ffaa44"); break;
+            case RT_Challenge: label="DEFI - SANS DEGAT"; lcol=QColor("#bb88ff"); break;
+            default: break;
+        }
+        if (!label.isEmpty()) {
+            int lw = rfm.horizontalAdvance(label);
+            QColor bg(0,0,0,180); p.fillRect(QRectF(GW/2-lw/2-4, TILE-4, lw+8, 12), bg);
+            p.setPen(lcol); p.drawText(GW/2-lw/2, TILE+5, label); p.setPen(Qt::NoPen);
+        }
+    }
 }
 
 void GameView::drawProgressionBar(QPainter &p, const GameModel &m, int x, int y, int w)
@@ -166,26 +237,45 @@ void GameView::drawHUD(QPainter &p, const GameModel &m)
         p.setFont(gf); p.setPen(QColor("#7799ff"));
         p.drawText(140, GH+33, "[T]");
     }
+    // Gold
+    if (m.player.gold > 0) {
+        QFont gf("monospace", 7, QFont::Bold);
+        p.setFont(gf); p.setPen(QColor("#ffcc44"));
+        p.drawText(GW - 80, GH+18, QString("$ %1").arg(m.player.gold));
+    }
     // Boss bar
     const Enemy *boss = nullptr;
-    for (auto &e : m.enemies) if (e.type==ET_MiniBoss || e.type==ET_FinalBoss) { boss = &e; break; }
+    for (auto &e : m.enemies) if (e.type==ET_MiniBoss || e.type==ET_FinalBoss || e.type==ET_TrueFinalBoss) { boss = &e; break; }
     if (boss && !boss->dead) {
         float bw = 240, bh = 11;
         float bx = GW/2.f - bw/2.f, by = GH+10;
         p.fillRect(QRectF(bx, by, bw, bh), C_HPB);
-        QColor bc = (boss->type == ET_FinalBoss) ?
-            ((boss->phase==4) ? QColor("#ff00ff") :
-             (boss->phase==3) ? QColor("#ff00aa") :
-             (boss->phase==2) ? QColor("#ff5500") : C_BE) :
-            ((boss->phase == 2) ? QColor("#ff5500") : QColor("#cc3344"));
+        QColor bc;
+        if (boss->type == ET_TrueFinalBoss) {
+            switch (boss->phase) {
+                case 5: bc = QColor("#ff00ff"); break;
+                case 4: bc = QColor("#cc00ff"); break;
+                case 3: bc = QColor("#9900ff"); break;
+                case 2: bc = QColor("#6633ff"); break;
+                default: bc = QColor("#bb44ff"); break;
+            }
+        } else if (boss->type == ET_FinalBoss) {
+            bc = (boss->phase==4) ? QColor("#ff00ff") :
+                 (boss->phase==3) ? QColor("#ff00aa") :
+                 (boss->phase==2) ? QColor("#ff5500") : C_BE;
+        } else {
+            bc = (boss->phase == 2) ? QColor("#ff5500") : QColor("#cc3344");
+        }
         p.fillRect(QRectF(bx, by, bw * boss->hp/boss->maxHp, bh), bc);
         p.setPen(QPen(C_GOLD, 1)); p.drawRect(QRectF(bx, by, bw, bh)); p.setPen(Qt::NoPen);
         QFont sf("monospace", 7, QFont::Bold); p.setFont(sf); p.setPen(C_GOLD);
         int wIdx = boss->subType;
         QString name = (wIdx>=0 && wIdx<m.worlds.size()) ? m.worlds[wIdx].bossNameFr : "BOSS";
-        QString label = (boss->type == ET_FinalBoss) ?
-            QString("%1 - PHASE %2").arg(name).arg(boss->phase) :
-            ((boss->phase==2) ? QString("%1 - FUREUR").arg(name) : name);
+        QString label = (boss->type == ET_TrueFinalBoss) ?
+            QString("%1 - PHASE %2 / 5").arg(name).arg(boss->phase) :
+            (boss->type == ET_FinalBoss) ?
+                QString("%1 - PHASE %2").arg(name).arg(boss->phase) :
+                ((boss->phase==2) ? QString("%1 - FUREUR").arg(name) : name);
         QFontMetrics fm(sf);
         p.drawText(GW/2 - fm.horizontalAdvance(label)/2, by-2, label);
     }
@@ -273,14 +363,62 @@ void GameView::render(QPainter &p, const GameModel &m)
 {
     drawRoom(p, m);
 
+    // ===== Biome particles (sous le reste) =====
+    for (auto &bp : m.biomeFx) {
+        float a = std::max(0.f, bp.life/bp.maxLife);
+        QColor c = bp.color; c.setAlphaF(std::min(1.f, a) * (c.alphaF() > 0 ? c.alphaF() : 1.f));
+        p.fillRect(QRectF(bp.x - bp.size/2.f, bp.y - bp.size/2.f, bp.size, bp.size), c);
+    }
+
     for (auto &pa : m.particles) {
         float a = std::max(0.f, pa.life/pa.maxLife);
         QColor c = pa.color; c.setAlphaF(a);
         p.fillRect(QRectF(pa.x - pa.size/2.f, pa.y - pa.size/2.f, pa.size, pa.size), c);
     }
 
+    // ===== Pickups =====
+    for (auto &pu : m.pickups) {
+        float bob = std::sin(pu.bobPhase) * 2.5f;
+        float yy = pu.y + bob;
+        QColor outline("#000000"), fillC, glow;
+        switch (pu.type) {
+        case PU_Gold:    fillC=QColor("#ffcc44"); glow=QColor("#ffee88"); break;
+        case PU_Heart:   fillC=QColor("#ff4477"); glow=QColor("#ff88aa"); break;
+        case PU_Potion:  fillC=QColor("#ff2255"); glow=QColor("#ff5577"); break;
+        case PU_Scroll:  fillC=QColor("#cc88ff"); glow=QColor("#eeaaff"); break;
+        case PU_Chest:   fillC=QColor("#aa6633"); glow=QColor("#ddaa44"); break;
+        }
+        // Halo
+        QColor hl = glow; hl.setAlphaF(0.4f + 0.2f*std::sin(m.globalTime*4+pu.bobPhase));
+        p.fillRect(QRectF(pu.x-10, yy-10, 20, 20), hl);
+        // Forme
+        if (pu.type == PU_Heart) {
+            p.fillRect(QRectF(pu.x-5, yy-3, 3, 3), fillC);
+            p.fillRect(QRectF(pu.x+2, yy-3, 3, 3), fillC);
+            p.fillRect(QRectF(pu.x-5, yy, 10, 4), fillC);
+            p.fillRect(QRectF(pu.x-3, yy+4, 6, 2), fillC);
+            p.fillRect(QRectF(pu.x-1, yy+6, 2, 1), fillC);
+        } else if (pu.type == PU_Gold) {
+            p.fillRect(QRectF(pu.x-4, yy-3, 8, 6), fillC);
+            p.fillRect(QRectF(pu.x-3, yy-2, 6, 4), glow);
+        } else if (pu.type == PU_Scroll) {
+            p.fillRect(QRectF(pu.x-5, yy-5, 10, 10), fillC);
+            p.fillRect(QRectF(pu.x-3, yy-3, 6, 6), QColor("#ffeebb"));
+            p.fillRect(QRectF(pu.x-2, yy-1, 4, 1), QColor("#000"));
+            p.fillRect(QRectF(pu.x-2, yy+1, 4, 1), QColor("#000"));
+        } else if (pu.type == PU_Chest) {
+            p.fillRect(QRectF(pu.x-6, yy-4, 12, 10), fillC);
+            p.fillRect(QRectF(pu.x-6, yy-4, 12, 3), glow);
+            p.fillRect(QRectF(pu.x-1, yy, 2, 2), QColor("#ffd544"));
+        } else { // Potion
+            p.fillRect(QRectF(pu.x-2, yy-6, 4, 2), QColor("#666"));
+            p.fillRect(QRectF(pu.x-3, yy-4, 6, 8), fillC);
+            p.fillRect(QRectF(pu.x-2, yy-2, 4, 4), glow);
+        }
+    }
+
     for (auto &e : m.enemies) {
-        if (e.type == ET_MiniBoss || e.type == ET_FinalBoss) {
+        if (e.type == ET_MiniBoss || e.type == ET_FinalBoss || e.type == ET_TrueFinalBoss) {
             drawBossInGame(p, m, e, 1.f);
             if (e.hitFlash > 0 && !e.dead) {
                 p.save();
@@ -293,8 +431,44 @@ void GameView::render(QPainter &p, const GameModel &m)
                 float bw = e.size * 1.5f, bh = 5;
                 float bx = e.x - bw/2.f, by = e.y - e.size*0.9f - 18;
                 p.fillRect(QRectF(bx, by, bw, bh), C_HPB);
-                QColor hpCol = (e.type == ET_FinalBoss) ? C_BE : QColor("#cc4422");
+                QColor hpCol = (e.type == ET_TrueFinalBoss) ? QColor("#bb44ff")
+                             : (e.type == ET_FinalBoss) ? C_BE : QColor("#cc4422");
                 p.fillRect(QRectF(bx, by, bw * e.hp/e.maxHp, bh), hpCol);
+            }
+            continue;
+        }
+        if (e.type == ET_Elite) {
+            int v = std::max(0, std::min(3, e.eliteVariant));
+            const QImage &sheet = m_assets.sprElite[v];
+            if (!sheet.isNull()) {
+                // Aura pulsée
+                int pulse = (int)(std::sin(e.auraPhase)*40);
+                QColor aura(255, 90+pulse, 50, 110);
+                p.fillRect(QRectF(e.x-26, e.y-30, 52, 52), aura);
+                // Sprite direct (pas spritesheet animé, 64x96)
+                int fw = sheet.width(), fh = sheet.height();
+                float sc = (e.size/40.f);
+                float dw = fw*sc, dh = fh*sc;
+                p.save();
+                if (e.facingLeft) {
+                    p.translate(int(e.x), 0); p.scale(-1, 1);
+                    p.drawImage(QRectF(-dw/2, e.y - dh*0.65f, dw, dh), sheet);
+                } else {
+                    p.drawImage(QRectF(e.x-dw/2, e.y-dh*0.65f, dw, dh), sheet);
+                }
+                p.restore();
+                if (e.hitFlash > 0) {
+                    p.save();
+                    p.setCompositionMode(QPainter::CompositionMode_Plus);
+                    p.setOpacity(std::min(0.6f, e.hitFlash*3));
+                    p.drawImage(QRectF(e.x-dw/2, e.y-dh*0.65f, dw, dh), sheet);
+                    p.restore();
+                }
+                if (e.hp < e.maxHp) {
+                    float bw = e.size*1.4f, bh = 5;
+                    p.fillRect(QRectF(e.x-bw/2, e.y-dh*0.65f-10, bw, bh), C_HPB);
+                    p.fillRect(QRectF(e.x-bw/2, e.y-dh*0.65f-10, bw*e.hp/e.maxHp, bh), QColor("#ff5544"));
+                }
             }
             continue;
         }
@@ -401,6 +575,35 @@ void GameView::render(QPainter &p, const GameModel &m)
                          1.3f, m.player.facingLeft, m.player.animTimer);
             p.setOpacity(1);
         }
+    }
+
+    // ===== FX sprites (explosions, portails, etc) =====
+    for (auto &fx : m.fxEffects) {
+        QImage sheet = m_assets.fxSheets[fx.sheetKey];
+        if (sheet.isNull()) continue;
+        int frame = std::min(fx.frameCount-1, (int)(fx.timer * fx.fps));
+        float dw = fx.frameW * fx.scale, dh = fx.frameH * fx.scale;
+        QRectF dst(fx.x - dw/2, fx.y - dh/2, dw, dh);
+        QRectF src(frame * fx.frameW, 0, fx.frameW, fx.frameH);
+        p.save();
+        p.setCompositionMode(QPainter::CompositionMode_Plus);
+        p.drawImage(dst, sheet, src);
+        p.restore();
+    }
+
+    // ===== Score popups =====
+    for (auto &pop : m.popups) {
+        float a = std::max(0.f, std::min(1.f, pop.life / pop.maxLife));
+        QFont pf("monospace", (int)(11 * pop.scale), QFont::Bold);
+        p.setFont(pf); QFontMetrics pfm(pf);
+        int w = pfm.horizontalAdvance(pop.text);
+        QColor shadow(0,0,0); shadow.setAlphaF(a*0.7f);
+        p.setPen(shadow);
+        p.drawText(int(pop.x - w/2 + 1), int(pop.y + 1), pop.text);
+        QColor col = pop.color; col.setAlphaF(a);
+        p.setPen(col);
+        p.drawText(int(pop.x - w/2), int(pop.y), pop.text);
+        p.setPen(Qt::NoPen);
     }
 
     drawHUD(p, m);

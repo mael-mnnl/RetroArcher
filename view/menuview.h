@@ -19,6 +19,13 @@ public:
     void drawLore        (QPainter &p, const Model::GameModel &m);
     void drawSkillSelect (QPainter &p, const Model::GameModel &m);
     void drawEndScreen   (QPainter &p, const Model::GameModel &m, bool win);
+    void drawClassSelect (QPainter &p, const Model::GameModel &m, int hover);
+    void drawRelicSelect (QPainter &p, const Model::GameModel &m, int hover);
+    void drawCurseSelect (QPainter &p, const Model::GameModel &m);
+    void drawShop        (QPainter &p, const Model::GameModel &m, int hover);
+    void drawForge       (QPainter &p, const Model::GameModel &m, int hover);
+    void drawBlessings   (QPainter &p, const Model::GameModel &m, int hover);
+    void drawLeaderboard (QPainter &p, const Model::GameModel &m);
 
 private:
     void drawSpriteAt(QPainter &p, const QImage &sheet, int frameCount, float fps,

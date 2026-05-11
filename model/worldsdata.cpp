@@ -15,6 +15,8 @@ void loadWorlds(QVector<WorldInfo> &out)
                 "mino",     "Minotaure",            16, 288, 160, 10.f, QColor("#cc8822")});
     out.append({"Citadelle gelee",   "Le Gardien du Givre - tu vas souffrir",
                 "frostguardian","Gardien du Givre",  6, 192, 128, 8.f,  QColor("#44ccff")});
+    out.append({"Abysses du Tyran",  "Lord Malificus - la Pierre attend d'etre reforgee",
+                "malificus", "Lord Malificus",       1, 64, 96, 6.f,  QColor("#bb44ff")});
 }
 
 }

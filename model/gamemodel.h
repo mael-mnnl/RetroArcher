@@ -57,6 +57,67 @@ struct GameModel {
     QColor  dlgColor;
     float   dlgTimer = 0;
     float   dlgFadeIn = 0;
+
+    // ----- v8 -----
+    RoomType roomType = RT_Normal;
+    std::vector<ObstacleTile> obstacles;
+    std::vector<Pickup>       pickups;
+    std::vector<ScorePopup>   popups;
+    std::vector<BiomeParticle> biomeFx;
+    std::vector<FxEffect>     fxEffects;
+
+    // Curses
+    std::vector<int> activeCurses;
+    std::vector<int> curseChoices;
+
+    // Relics
+    int selectedRelicId = -1;
+    std::vector<int> relicChoices;
+
+    // Class selection
+    int  selectedClassId = 0;
+    bool runHasFreeRevive = false;   // pour Phoenix Tear
+
+    // Meta-progression "blessings"
+    int  blessingMaxHpBonus = 0;     // +1 PV max au depart
+    int  blessingStartGold  = 0;     // +50 gold au depart
+    bool blessingFreeSkill  = false; // +1 skill choice au debut
+    int  blessingPointsSpent= 0;
+    int  blessingPointsAvail= 0;
+
+    // Ascension (mode hardcore)
+    bool ascensionUnlocked = false;
+    bool ascensionEnabled  = false;
+
+    // Shop / Forge state
+    std::vector<int> shopItems;      // skill IDs en vente
+    std::vector<int> shopPrices;
+    int   forgeSelectedSkillIdx = -1;
+
+    // Challenge state
+    bool challengeStarted = false;
+    bool challengePassed  = true;
+
+    // Combo / score popups
+    int   killStreakBig = 0;         // streak pour affichage popup
+    float killStreakBigTimer = 0;
+    float perfectRoomTimer = 0;
+    int   lastBossHurtCount = 0;     // pour traquer no-hit boss
+
+    // Lord Malificus (monde 6)
+    bool malificusUnlocked = false;
+    int  bossesKilledThisRun = 0;
+
+    // Transitions
+    QColor fadeColor = QColor(0,0,0);
+
+    // Leaderboard
+    std::vector<LeaderEntry> leaderboard;
+
+    // Tables look-up
+    std::vector<CurseInfo> allCurses;
+    std::vector<RelicInfo> allRelics;
+    std::vector<ClassInfo> allClasses;
 };
 
 }

@@ -84,6 +84,14 @@ struct Enemy {
     float trailCd = 0;
     bool  fragmentDropped = false;
     int   dialogStage = 0;
+
+    // Elite / Malificus
+    bool  elite = false;
+    int   eliteVariant = 0;   // sprite key (0..3)
+    float auraPhase = 0;      // pour aura colorée pulsée
+    float dropChance = 0;     // pour drop garanti
+    int   malificusPattern = 0;  // pattern courant (rotation)
+    float patternCd = 0;
 };
 
 struct Player {
@@ -130,6 +138,17 @@ struct Player {
     int   nextEnemyMarked = -1;
     float burstQueueTimer = 0;
     float chargeShotPower = 0;
+
+    // ----- v8 new fields -----
+    int   classId = 0;
+    int   relicId = -1;
+    int   gold = 0;
+    int   tempScrollSkillId = -1;   // parchemin actif (1 boss)
+    int   tempScrollBossId  = -1;
+    bool  challengeNoHit = true;    // pour salle defi
+    bool  inChallenge = false;
+    float dashAimX = 0, dashAimY = 0;
+    bool  hasDashAim = false;
 };
 
 struct Skill {
@@ -153,6 +172,89 @@ struct WorldInfo {
     QColor  accent;
 };
 
+// ------- Nouveaux types pour v8 -------
+
+struct Pickup {
+    PickupType type = PU_Gold;
+    float x = 0, y = 0;
+    float vx = 0, vy = 0;     // pour le bounce initial
+    float bobPhase = 0;
+    float lifeSec = 20.f;     // disparait apres
+    int   value = 1;          // gold/potion strength
+    int   scrollSkillId = -1; // si Scroll
+};
+
+struct ObstacleTile {
+    int col, row;
+    int kind;                 // 0 = pillar, 1 = crate, 2 = brazier/torch
+    float anim = 0;           // pour braseros animes
+};
+
+struct CurseInfo {
+    int id;
+    QString name;
+    QString desc;
+    QColor color;
+};
+
+struct RelicInfo {
+    int id;
+    QString name;
+    QString desc;
+    QColor color;
+};
+
+struct ClassInfo {
+    int id;
+    QString name;
+    QString desc;
+    QColor accent;
+    float baseHp;
+    float baseSpeed;
+    float baseFireRate;
+    float baseDamage;
+    int   startGrenade;
+    int   startSkillId;       // -1 = aucun
+};
+
+struct ScorePopup {
+    QString text;
+    QColor  color;
+    float   x, y;
+    float   life = 0.9f;
+    float   maxLife = 0.9f;
+    float   scale = 1.0f;
+};
+
+// Effet visuel d'arrière-plan/sol par monde
+struct BiomeParticle {
+    float x, y, vx, vy;
+    QColor color;
+    float life, maxLife;
+    int size;
+};
+
+struct LeaderEntry {
+    int   roomReached;
+    int   worldReached;
+    int   classId;
+    int   relicId;
+    int   skillsCount;
+    qint64 timestamp;
+};
+
+// FX sprite-based (explosions, portails, etc.)
+struct FxEffect {
+    QString sheetKey;   // "fx_fire", "fx_portal", ...
+    int  frameCount;
+    int  frameW;
+    int  frameH;
+    float fps;
+    float x, y;
+    float scale;
+    float timer = 0;
+    bool  alive = true;
+};
 }
 
 #endif

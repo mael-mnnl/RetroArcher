@@ -20,6 +20,8 @@ bool isObstacleTile(const Model::GameModel &m, int col, int row)
         if (col==0      && row==DOOR_ROW && m.doorOpen[3]) return false;
         return true;
     }
+    // Obstacles intérieurs (piliers, caisses)
+    for (auto &o : m.obstacles) if (o.col == col && o.row == row) return true;
     return false;
 }
 

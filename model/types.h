@@ -5,7 +5,9 @@ namespace Model {
 
 enum EnemyType {
     ET_None, ET_Slime, ET_Skel, ET_Bat, ET_Brute, ET_Mage,
-    ET_Minion, ET_MiniBoss, ET_FinalBoss
+    ET_Minion, ET_MiniBoss, ET_FinalBoss,
+    ET_Elite,         // champion en salle d'élite
+    ET_TrueFinalBoss  // Lord Malificus (monde 6)
 };
 
 enum AnimType { AN_Idle, AN_Walk, AN_Atk, AN_Hurt, AN_Death };
@@ -13,8 +15,46 @@ enum AnimType { AN_Idle, AN_Walk, AN_Atk, AN_Hurt, AN_Death };
 enum GameState {
     GS_Menu, GS_SkinSelect, GS_Discoveries, GS_Lore,
     GS_Tutorial,
-    GS_Playing, GS_RoomCleared, GS_FadeOut, GS_SkillSelect, GS_FadeIn,
-    GS_GameOver, GS_Victory
+    GS_ClassSelect,    // choisir archetype
+    GS_RelicSelect,    // choisir relique au depart
+    GS_Playing, GS_RoomCleared, GS_FadeOut, GS_SkillSelect,
+    GS_CurseSelect,    // apres boss, choisir malediction
+    GS_Shop, GS_Forge, GS_Challenge,  // salles speciales (states actifs)
+    GS_FadeIn,
+    GS_GameOver, GS_Victory,
+    GS_Blessings,      // ecran meta-progression
+    GS_Leaderboard
+};
+
+enum RoomType {
+    RT_Normal, RT_Boss, RT_Elite, RT_Shop, RT_Forge, RT_Challenge
+};
+
+enum CharClass {
+    CC_Hero = 0,      // l'original, equilibre
+    CC_Hunter = 1,    // chasseur : portee + vitesse
+    CC_Paladin = 2,   // paladin : resistance + shield
+    CC_Alchemist = 3  // alchimiste : grenade + elements
+};
+
+enum PickupType {
+    PU_Gold, PU_Potion, PU_Scroll, PU_Heart, PU_Chest
+};
+
+enum CurseId {
+    CRS_FastEnemies, CRS_PiercingShots, CRS_FragileGlass,
+    CRS_NoRegen, CRS_SlowDash, CRS_BloodTax,
+    CRS__COUNT
+};
+
+enum RelicId {
+    REL_BloodOrb,      // kill heals 0.5, lose skill on death
+    REL_BrokenWatch,   // timestop per room, no skills
+    REL_SoulMirror,    // bullets bounce, hurt self
+    REL_GoldenSeed,    // +50% gold but -1 maxHP
+    REL_PhoenixTear,   // 1 free revive at full HP
+    REL_VoidPact,      // +30% dmg but enemies +20% HP
+    REL__COUNT
 };
 
 // Skill IDs - 65 total

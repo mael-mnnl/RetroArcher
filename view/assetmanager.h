@@ -36,6 +36,9 @@ public:
     QImage sprArrow;
     QImage sprOrc[6][5];
     QHash<QString, QImage> bossSheets;
+    // v8 : sprites élites + FX magiques
+    QImage sprElite[4];                   // 4 variantes élites
+    QHash<QString, QImage> fxSheets;      // fx_fire, fx_portal, ...
 };
 
 }

@@ -13,6 +13,7 @@ SOURCES += \
     model/skillsdata.cpp \
     model/worldsdata.cpp \
     model/savemanager.cpp \
+    model/contentdata.cpp \
     view/assetmanager.cpp \
     view/gameview.cpp \
     view/menuview.cpp \
@@ -24,7 +25,13 @@ SOURCES += \
     controller/combatsystem.cpp \
     controller/playercontroller.cpp \
     controller/enemyai.cpp \
-    controller/tutorialsystem.cpp
+    controller/tutorialsystem.cpp \
+    controller/cursesystem.cpp \
+    controller/relicsystem.cpp \
+    controller/pickupsystem.cpp \
+    controller/scoresystem.cpp \
+    controller/biomefxsystem.cpp \
+    controller/levelgen.cpp
 
 HEADERS += \
     gamewidget.h \
@@ -37,6 +44,7 @@ HEADERS += \
     model/skillsdata.h \
     model/worldsdata.h \
     model/savemanager.h \
+    model/contentdata.h \
     view/assetmanager.h \
     view/gameview.h \
     view/menuview.h \
@@ -48,6 +56,12 @@ HEADERS += \
     controller/combatsystem.h \
     controller/playercontroller.h \
     controller/enemyai.h \
-    controller/tutorialsystem.h
+    controller/tutorialsystem.h \
+    controller/cursesystem.h \
+    controller/relicsystem.h \
+    controller/pickupsystem.h \
+    controller/scoresystem.h \
+    controller/biomefxsystem.h \
+    controller/levelgen.h
 
 RESOURCES += resources.qrc

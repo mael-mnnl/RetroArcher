@@ -68,6 +68,22 @@ void AssetManager::load()
     bossSheets["demonslime"]    = QImage(":/sprites/boss_demonslime.png");
     bossSheets["mino"]          = QImage(":/sprites/boss_mino.png");
     bossSheets["frostguardian"] = QImage(":/sprites/boss_frostguardian.png");
+    bossSheets["malificus"]     = QImage(":/sprites/boss_malificus.png");
+
+    // Elites
+    sprElite[0] = QImage(":/sprites/elite_red.png");
+    sprElite[1] = QImage(":/sprites/elite_classic.png");
+    sprElite[2] = QImage(":/sprites/elite_spike.png");
+    sprElite[3] = QImage(":/sprites/elite_eyes.png");
+
+    // FX sprites
+    fxSheets["fire"]      = QImage(":/sprites/fx_fire.png");      // 576x72 = 8f
+    fxSheets["portal"]    = QImage(":/sprites/fx_portal.png");    // 576x72 = 8f
+    fxSheets["sparkle"]   = QImage(":/sprites/fx_sparkle.png");   // 288x72 = 4f
+    fxSheets["explosion"] = QImage(":/sprites/fx_explosion.png"); // 288x72 = 4f
+    fxSheets["ice"]       = QImage(":/sprites/fx_ice.png");       // 576x72 = 8f
+    fxSheets["poison"]    = QImage(":/sprites/fx_poison.png");    // 576x72 = 8f
+    fxSheets["void"]      = QImage(":/sprites/fx_void.png");      // 432x72 = 6f
 }
 
 void AssetManager::buildSkinSprites()

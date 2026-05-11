@@ -109,6 +109,21 @@ void MenuView::drawMenu(QPainter &p, const GameModel &m)
     drawBtn(264, "D",      "Decouvertes",    QColor("#bb88ff"));
     drawBtn(290, "L",      "Lore",           QColor("#ddccaa"));
 
+    // Mini-boutons B & K à droite
+    auto drawSmall = [&](int x, int y, const QString &key, const QString &label, QColor accent) {
+        QFont bf("monospace", 7, QFont::Bold); p.setFont(bf); QFontMetrics bfm(bf);
+        QString text = QString("[%1] %2").arg(key, label);
+        int w = bfm.horizontalAdvance(text) + 12;
+        QColor bg(20, 20, 40); p.fillRect(QRectF(x, y, w, 16), bg);
+        p.setPen(QPen(accent, 1)); p.setBrush(Qt::NoBrush);
+        p.drawRect(x, y, w, 16); p.setPen(Qt::NoPen);
+        p.setPen(accent); p.drawText(x+6, y+11, text);
+    };
+    drawSmall(CW-110, 186, "B", "Benedictions", QColor("#ffd544"));
+    drawSmall(CW-110, 208, "K", "Classement",   QColor("#88eeaa"));
+    if (m.ascensionUnlocked)
+        drawSmall(CW-110, 230, "A", "Ascension",  QColor("#ff5544"));
+
     int cy = 326;
     QFont cf("monospace", 7, QFont::Bold); p.setFont(cf); QFontMetrics cfm(cf);
     QColor cBorder = m.cheatFocused ? QColor("#ff66aa") : QColor("#5a4566");
@@ -478,6 +493,372 @@ void MenuView::drawEndScreen(QPainter &p, const GameModel &m, bool win)
     QString r = "ESPACE : rejouer    -    ESC : menu";
     p.setPen(QColor("#88ff88"));
     p.drawText(CW/2 - sfm.horizontalAdvance(r)/2, CH/2 + 50, r);
+}
+
+// =============== CLASS SELECT ===============
+void MenuView::drawClassSelect(QPainter &p, const GameModel &m, int hover)
+{
+    p.fillRect(0, 0, CW, CH, QColor(12, 8, 25));
+    QFont tf("monospace", 16, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "CHOISIS TON ARCHETYPE";
+    p.setPen(C_GOLD); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 30, t);
+
+    int n = (int)m.allClasses.size();
+    int cardW = 115, gap = 10;
+    int totalW = cardW*n + gap*(n-1);
+    int sx = CW/2 - totalW/2, sy = 70;
+    for (int i = 0; i < n; ++i) {
+        int x = sx + i*(cardW+gap);
+        const ClassInfo &c = m.allClasses[i];
+        bool sel = (i == hover);
+        QColor bg = sel ? QColor(45, 35, 80) : QColor(22, 16, 38);
+        p.fillRect(x, sy, cardW, 210, bg);
+        p.setPen(QPen(c.accent, sel?3:2)); p.setBrush(Qt::NoBrush);
+        p.drawRect(x, sy, cardW, 210); p.setPen(Qt::NoPen);
+        QFont nf("monospace", 9, QFont::Bold); p.setFont(nf); QFontMetrics nfm(nf);
+        p.setPen(c.accent);
+        p.drawText(x + cardW/2 - nfm.horizontalAdvance(c.name)/2, sy+18, c.name);
+        // Stats
+        QFont sf2("monospace", 7); p.setFont(sf2);
+        p.setPen(QColor("#ccddff"));
+        QStringList stats = {
+            QString("PV : %1").arg(int(c.baseHp)),
+            QString("Vitesse : %1").arg(int(c.baseSpeed)),
+            QString("Cadence : %1").arg(QString::number(c.baseFireRate, 'f', 2)),
+            QString("Degats : %1").arg(int(c.baseDamage)),
+            QString("Grenades : %1").arg(c.startGrenade)
+        };
+        int yy = sy+40;
+        for (auto &s : stats) { p.drawText(x+10, yy, s); yy += 11; }
+        // Desc
+        p.setPen(QColor("#bbaaff"));
+        QStringList words = c.desc.split(' ');
+        QString line; int dy = yy + 8;
+        QFontMetrics dfm(sf2);
+        for (auto &w : words) {
+            QString test = line.isEmpty() ? w : line + " " + w;
+            if (dfm.horizontalAdvance(test) > cardW-12) {
+                p.drawText(x+6, dy, line); dy += 10; line = w;
+            } else line = test;
+        }
+        if (!line.isEmpty()) p.drawText(x+6, dy, line);
+        if (sel) {
+            QFont kf("monospace", 16, QFont::Bold); p.setFont(kf);
+            p.setPen(c.accent);
+            QString k = QString::number(i+1);
+            QFontMetrics kfm(kf);
+            p.drawText(x + cardW/2 - kfm.horizontalAdvance(k)/2, sy+205, k);
+        }
+    }
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString foot = "<-/-> selection - ESPACE/ENTREE confirmer - ESC retour";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-12, foot);
+}
+
+// =============== RELIC SELECT ===============
+void MenuView::drawRelicSelect(QPainter &p, const GameModel &m, int hover)
+{
+    p.fillRect(0, 0, CW, CH, QColor(10, 6, 20));
+    QFont tf("monospace", 16, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "RELIQUE DE DEPART";
+    p.setPen(C_GOLD); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 32, t);
+    QFont sf2("monospace", 8); p.setFont(sf2); QFontMetrics sfm(sf2);
+    QString s = "Choisis une relique - effets permanents pour ce run";
+    p.setPen(QColor("#bbaaff"));
+    p.drawText(CW/2 - sfm.horizontalAdvance(s)/2, 50, s);
+
+    int n = std::min((int)m.relicChoices.size(), 3);
+    int cardW = 155, gap = 12, sy = 80;
+    int totalW = cardW*n + gap*(n-1);
+    int sx = CW/2 - totalW/2;
+    for (int i = 0; i < n; ++i) {
+        int x = sx + i*(cardW+gap);
+        int rid = m.relicChoices[i];
+        if (rid < 0 || rid >= (int)m.allRelics.size()) continue;
+        const RelicInfo &r = m.allRelics[rid];
+        bool sel = (i == hover);
+        QColor bg = r.color; bg.setAlpha(sel?100:50);
+        p.fillRect(x, sy, cardW, 220, bg);
+        p.setPen(QPen(r.color, sel?3:2)); p.setBrush(Qt::NoBrush);
+        p.drawRect(x, sy, cardW, 220); p.setPen(Qt::NoPen);
+        QFont nf("monospace", 10, QFont::Bold); p.setFont(nf);
+        p.setPen(r.color); QFontMetrics nfm(nf);
+        p.drawText(x + cardW/2 - nfm.horizontalAdvance(r.name)/2, sy+22, r.name);
+        QFont kf("monospace", 28, QFont::Bold); p.setFont(kf);
+        QString k = QString::number(i+1);
+        QFontMetrics kfm(kf);
+        p.drawText(x + cardW/2 - kfm.horizontalAdvance(k)/2, sy+90, k);
+        QFont df("monospace", 7); p.setFont(df); QFontMetrics dfm(df);
+        p.setPen(QColor("#ddccff"));
+        QStringList words = r.desc.split(' ');
+        QString line; int dy = sy + 130;
+        for (auto &w : words) {
+            QString test = line.isEmpty() ? w : line + " " + w;
+            if (dfm.horizontalAdvance(test) > cardW-14) {
+                p.drawText(x+cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+                dy += 12; line = w;
+            } else line = test;
+        }
+        if (!line.isEmpty())
+            p.drawText(x+cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+    }
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString foot = "1, 2, 3 pour choisir - 0 pour aucune relique";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-18, foot);
+}
+
+// =============== CURSE SELECT ===============
+void MenuView::drawCurseSelect(QPainter &p, const GameModel &m)
+{
+    QColor overlay(0,0,0); overlay.setAlphaF(0.78f);
+    p.fillRect(0, 0, CW, CH, overlay);
+    QFont tf("monospace", 14, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "CHOISIS UNE MALEDICTION";
+    p.setPen(QColor("#ff66aa")); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 50, t);
+    QFont sf2("monospace", 8); p.setFont(sf2); QFontMetrics sfm(sf2);
+    p.setPen(QColor("#ddbbcc"));
+    QString s = "Le pouvoir a un prix - une malediction obligatoire";
+    p.drawText(CW/2 - sfm.horizontalAdvance(s)/2, 68, s);
+    int n = std::min((int)m.curseChoices.size(), 2);
+    int cardW = 200, gap = 18, sy = 100;
+    int totalW = cardW*n + gap*(n-1);
+    int sx = CW/2 - totalW/2;
+    for (int i = 0; i < n; ++i) {
+        int x = sx + i*(cardW+gap);
+        int cid = m.curseChoices[i];
+        if (cid < 0 || cid >= (int)m.allCurses.size()) continue;
+        const CurseInfo &c = m.allCurses[cid];
+        QColor bg(40,10,20); p.fillRect(x, sy, cardW, 180, bg);
+        p.setPen(QPen(c.color, 2)); p.setBrush(Qt::NoBrush);
+        p.drawRect(x, sy, cardW, 180); p.setPen(Qt::NoPen);
+        QFont nf("monospace", 11, QFont::Bold); p.setFont(nf); QFontMetrics nfm(nf);
+        p.setPen(c.color);
+        p.drawText(x+cardW/2 - nfm.horizontalAdvance(c.name)/2, sy+30, c.name);
+        QFont kf("monospace", 24, QFont::Bold); p.setFont(kf);
+        QString k = QString::number(i+1);
+        QFontMetrics kfm(kf);
+        p.drawText(x+cardW/2 - kfm.horizontalAdvance(k)/2, sy+85, k);
+        QFont df("monospace", 8); p.setFont(df); QFontMetrics dfm(df);
+        p.setPen(QColor("#ffddee"));
+        QStringList words = c.desc.split(' ');
+        QString line; int dy = sy + 130;
+        for (auto &w : words) {
+            QString test = line.isEmpty() ? w : line + " " + w;
+            if (dfm.horizontalAdvance(test) > cardW-14) {
+                p.drawText(x+cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+                dy += 12; line = w;
+            } else line = test;
+        }
+        if (!line.isEmpty())
+            p.drawText(x+cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+    }
+}
+
+// =============== SHOP ===============
+void MenuView::drawShop(QPainter &p, const GameModel &m, int hover)
+{
+    QColor overlay(0,0,0); overlay.setAlphaF(0.5f);
+    p.fillRect(0, 0, CW, CH, overlay);
+    QFont tf("monospace", 13, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "MARCHAND ITINERANT";
+    p.setPen(QColor("#44ddaa")); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 36, t);
+    QFont sf2("monospace", 8); p.setFont(sf2); QFontMetrics sfm(sf2);
+    p.setPen(QColor("#ffcc44"));
+    QString g = QString("Or : $%1").arg(m.player.gold);
+    p.drawText(CW/2 - sfm.horizontalAdvance(g)/2, 52, g);
+
+    int n = (int)m.shopItems.size();
+    int cardW = 130, gap = 14, sy = 78;
+    int totalW = cardW*n + gap*(n-1);
+    int sx = CW/2 - totalW/2;
+    for (int i = 0; i < n; ++i) {
+        int x = sx + i*(cardW+gap);
+        int sid = m.shopItems[i];
+        const Skill *sk = nullptr;
+        for (auto &s2 : m.allSkills) if (s2.id == sid) { sk = &s2; break; }
+        if (!sk) continue;
+        bool sel = (i == hover);
+        QColor bg = sk->color; bg.setAlpha(sel?100:50);
+        p.fillRect(x, sy, cardW, 180, bg);
+        p.setPen(QPen(sk->color, sel?3:2)); p.setBrush(Qt::NoBrush);
+        p.drawRect(x, sy, cardW, 180); p.setPen(Qt::NoPen);
+        QFont nf("monospace", 9, QFont::Bold); p.setFont(nf); QFontMetrics nfm(nf);
+        p.setPen(sk->color);
+        p.drawText(x+cardW/2 - nfm.horizontalAdvance(sk->name)/2, sy+22, sk->name);
+        QFont kf("monospace", 22, QFont::Bold); p.setFont(kf);
+        QString k = QString::number(i+1);
+        QFontMetrics kfm(kf);
+        p.drawText(x+cardW/2 - kfm.horizontalAdvance(k)/2, sy+76, k);
+        // Prix
+        QFont pf("monospace", 10, QFont::Bold); p.setFont(pf); QFontMetrics pfm(pf);
+        QString price = QString("$ %1").arg(m.shopPrices[i]);
+        bool canAfford = m.player.gold >= m.shopPrices[i];
+        p.setPen(canAfford ? QColor("#ffcc44") : QColor("#776655"));
+        p.drawText(x+cardW/2 - pfm.horizontalAdvance(price)/2, sy+105, price);
+        QFont df("monospace", 7); p.setFont(df); QFontMetrics dfm(df);
+        p.setPen(QColor("#ddddff"));
+        QStringList words = sk->desc.split(' ');
+        QString line; int dy = sy + 130;
+        for (auto &w : words) {
+            QString test = line.isEmpty() ? w : line + " " + w;
+            if (dfm.horizontalAdvance(test) > cardW-12) {
+                p.drawText(x+cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+                dy += 11; line = w;
+            } else line = test;
+        }
+        if (!line.isEmpty())
+            p.drawText(x+cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+    }
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString foot = "1,2,3 acheter - ESC partir";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-18, foot);
+}
+
+// =============== FORGE ===============
+void MenuView::drawForge(QPainter &p, const GameModel &m, int hover)
+{
+    QColor overlay(0,0,0); overlay.setAlphaF(0.6f);
+    p.fillRect(0, 0, CW, CH, overlay);
+    QFont tf("monospace", 13, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "FORGE";
+    p.setPen(QColor("#ffaa44")); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 36, t);
+    QFont sf2("monospace", 8); p.setFont(sf2); QFontMetrics sfm(sf2);
+    QString s = "Sacrifie 1 skill pour en obtenir 1 du tier superieur";
+    p.setPen(QColor("#ffddaa"));
+    p.drawText(CW/2 - sfm.horizontalAdvance(s)/2, 52, s);
+
+    int n = (int)m.player.skills.size();
+    if (n == 0) {
+        QFont mf("monospace", 9); p.setFont(mf); QFontMetrics mfm(mf);
+        QString msg = "Tu n'as aucun skill a sacrifier !";
+        p.setPen(QColor("#cccccc"));
+        p.drawText(CW/2 - mfm.horizontalAdvance(msg)/2, CH/2, msg);
+    } else {
+        QFont kf("monospace", 7, QFont::Bold); p.setFont(kf); QFontMetrics kfm(kf);
+        int colW = 75, gap = 6;
+        int perRow = std::min(6, (CW - 40) / (colW+gap));
+        int startX = CW/2 - (perRow*(colW+gap)-gap)/2;
+        int rowY = 80;
+        for (int i = 0; i < n; ++i) {
+            int rx = startX + (i % perRow)*(colW+gap);
+            int ry = rowY + (i / perRow)*40;
+            int sid = m.player.skills[i];
+            const Skill *sk = nullptr;
+            for (auto &s2 : m.allSkills) if (s2.id == sid) { sk = &s2; break; }
+            if (!sk) continue;
+            bool sel = (i == hover);
+            QColor bg = sk->color; bg.setAlpha(sel?120:60);
+            p.fillRect(rx, ry, colW, 34, bg);
+            p.setPen(QPen(sk->color, sel?2:1)); p.setBrush(Qt::NoBrush);
+            p.drawRect(rx, ry, colW, 34); p.setPen(Qt::NoPen);
+            p.setPen(sk->color);
+            p.drawText(rx+3, ry+10, sk->name.left(11));
+            QFont ff2("monospace", 6); p.setFont(ff2);
+            p.setPen(QColor("#cccccc"));
+            p.drawText(rx+3, ry+22, QString("M%1").arg(sk->worldTier));
+            p.setFont(kf);
+        }
+    }
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString foot = "<-/-> nav - ESPACE sacrifier - ESC partir";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-18, foot);
+}
+
+// =============== BLESSINGS (meta) ===============
+void MenuView::drawBlessings(QPainter &p, const GameModel &m, int hover)
+{
+    p.fillRect(0, 0, CW, CH, QColor(8, 5, 22));
+    QFont tf("monospace", 14, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "BENEDICTIONS PERMANENTES";
+    p.setPen(C_GOLD); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 32, t);
+    QFont sf2("monospace", 8); p.setFont(sf2); QFontMetrics sfm(sf2);
+    QString s = QString("Fragments disponibles : %1").arg(m.blessingPointsAvail);
+    p.setPen(QColor("#ffd544"));
+    p.drawText(CW/2 - sfm.horizontalAdvance(s)/2, 52, s);
+
+    struct B { QString name; QString desc; int cost; bool active; };
+    B blessings[3] = {
+        { QString("PV+ x%1").arg(m.blessingMaxHpBonus),
+          "+1 PV maximum au depart (cumulable)", 1, m.blessingMaxHpBonus > 0 },
+        { QString("Bourse +%1$").arg(m.blessingStartGold),
+          "+25$ au depart de chaque run (cumulable)", 1, m.blessingStartGold > 0 },
+        { "Skill bonus",
+          "Commence avec 1 skill au choix parmi 3", 2, m.blessingFreeSkill }
+    };
+    int cardW = CW - 80, sy = 80;
+    for (int i = 0; i < 3; ++i) {
+        int x = 40, y = sy + i*60;
+        bool sel = (i == hover);
+        QColor bg = sel ? QColor(35, 28, 60) : QColor(20, 15, 35);
+        p.fillRect(x, y, cardW, 54, bg);
+        p.setPen(QPen(blessings[i].active ? QColor("#88ff88") : QColor("#666688"), sel?2:1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(x, y, cardW, 54); p.setPen(Qt::NoPen);
+        QFont nf("monospace", 9, QFont::Bold); p.setFont(nf);
+        p.setPen(blessings[i].active ? QColor("#88ffaa") : QColor("#ddccff"));
+        p.drawText(x+10, y+18, blessings[i].name);
+        QFont df("monospace", 7); p.setFont(df);
+        p.setPen(QColor("#bbaacc"));
+        p.drawText(x+10, y+34, blessings[i].desc);
+        QFont cf("monospace", 8, QFont::Bold); p.setFont(cf);
+        p.setPen(QColor("#ffcc44"));
+        QString cost = QString("%1 frag").arg(blessings[i].cost);
+        QFontMetrics cfm(cf);
+        p.drawText(x+cardW - cfm.horizontalAdvance(cost) - 10, y+30, cost);
+    }
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString foot = "Haut/Bas selection - ESPACE acheter - ESC retour";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-12, foot);
+}
+
+// =============== LEADERBOARD ===============
+void MenuView::drawLeaderboard(QPainter &p, const GameModel &m)
+{
+    p.fillRect(0, 0, CW, CH, QColor(8, 5, 22));
+    QFont tf("monospace", 14, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString t = "MEILLEURS RUNS";
+    p.setPen(C_GOLD); p.drawText(CW/2 - tfm.horizontalAdvance(t)/2, 30, t);
+    QFont hf("monospace", 7, QFont::Bold); p.setFont(hf); QFontMetrics hfm(hf);
+    p.setPen(QColor("#aaaaff"));
+    int colX[5] = { 30, 65, 130, 250, 380 };
+    p.drawText(colX[0], 52, "#");
+    p.drawText(colX[1], 52, "SALLE");
+    p.drawText(colX[2], 52, "CLASSE");
+    p.drawText(colX[3], 52, "RELIQUE");
+    p.drawText(colX[4], 52, "SKILLS");
+
+    QFont rf("monospace", 8); p.setFont(rf);
+    int y = 72;
+    for (int i = 0; i < (int)m.leaderboard.size() && i < 10; ++i) {
+        const LeaderEntry &e = m.leaderboard[i];
+        QString className = (e.classId >= 0 && e.classId < (int)m.allClasses.size())
+            ? m.allClasses[e.classId].name : QString("?");
+        QString relic = (e.relicId >= 0 && e.relicId < (int)m.allRelics.size())
+            ? m.allRelics[e.relicId].name : QString("aucune");
+        QColor c = i < 3 ? C_GOLD : QColor("#ddccff");
+        p.setPen(c);
+        p.drawText(colX[0], y, QString::number(i+1));
+        p.drawText(colX[1], y, QString("%1 (M%2)").arg(e.roomReached).arg(e.worldReached));
+        p.drawText(colX[2], y, className);
+        p.drawText(colX[3], y, relic);
+        p.drawText(colX[4], y, QString::number(e.skillsCount));
+        y += 14;
+    }
+    if (m.leaderboard.empty()) {
+        QFont mf("monospace", 9); p.setFont(mf); QFontMetrics mfm(mf);
+        QString msg = "Aucun run enregistre - lance ta premiere aventure !";
+        p.setPen(QColor("#7766aa"));
+        p.drawText(CW/2 - mfm.horizontalAdvance(msg)/2, CH/2, msg);
+    }
+    QFont ff("monospace", 8); p.setFont(ff); QFontMetrics ffm(ff);
+    QString foot = "ESC : retour";
+    p.setPen(QColor("#aaaaff"));
+    p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-12, foot);
 }
 
 }

@@ -3,6 +3,7 @@
 #include "collisionsystem.h"
 #include "dialogsystem.h"
 #include "roombuilder.h"
+#include "cursesystem.h"
 #include "../model/gamemodel.h"
 #include "../model/types.h"
 #include "../core/utils.h"
@@ -20,13 +21,14 @@ using namespace Core;
 void update(GameModel &m, float dt)
 {
     int origSize = (int)m.enemies.size();
+    float curseEnemyMul = Curse::enemySpeedMul(m);
     for (int idx = 0; idx < origSize; ++idx) {
         Enemy &e = m.enemies[idx];
         if (e.hitFlash > 0) e.hitFlash -= dt;
         if (e.slowTimer > 0) e.slowTimer -= dt;
         if (e.dead) { e.animTimer += dt; continue; }
 
-        float adt = dt * (e.slowTimer > 0 ? 0.5f : 1.f);
+        float adt = dt * (e.slowTimer > 0 ? 0.5f : 1.f) * curseEnemyMul;
         e.animTimer += adt;
 
         if (e.poisonTimer > 0) {
@@ -108,8 +110,8 @@ void update(GameModel &m, float dt)
             if (e.anim==AN_Hurt && e.animTimer>0.4f) { e.anim=AN_Walk; e.animTimer=0; }
             else if (e.anim!=AN_Hurt) e.anim = (d>5)?AN_Walk:AN_Idle;
         }
-        else if (e.type == ET_MiniBoss || e.type == ET_FinalBoss) {
-            if (e.type == ET_FinalBoss) {
+        else if (e.type == ET_MiniBoss || e.type == ET_FinalBoss || e.type == ET_TrueFinalBoss) {
+            if (e.type == ET_FinalBoss || e.type == ET_TrueFinalBoss) {
                 int oldPhase = e.phase;
                 if (e.hp < e.maxHp*0.75f && e.phase==1) e.phase=2;
                 if (e.hp < e.maxHp*0.50f && e.phase==2) e.phase=3;
@@ -394,6 +396,149 @@ void update(GameModel &m, float dt)
                         e.y = clampF(e.y, TILE*1.5f, GH-TILE*1.5f);
                     }
                 }
+            } else if (e.subType == 5) {
+                // ====== LORD MALIFICUS - 5 phases ======
+                int oldPhase = e.phase;
+                if (e.hp < e.maxHp*0.80f && e.phase==1) e.phase=2;
+                if (e.hp < e.maxHp*0.60f && e.phase==2) e.phase=3;
+                if (e.hp < e.maxHp*0.40f && e.phase==3) e.phase=4;
+                if (e.hp < e.maxHp*0.20f && e.phase==4) e.phase=5;
+                if (e.phase != oldPhase) {
+                    Dialog::triggerBoss(m, 5, e.phase);
+                    // Onde d'energie violette autour de Malificus
+                    for (int i=0; i<32; ++i) {
+                        Particle p; p.x=e.x; p.y=e.y;
+                        float a = (i/32.f)*6.28f;
+                        p.vx = std::cos(a)*200; p.vy = std::sin(a)*200;
+                        p.color = QColor("#bb44ff"); p.life=p.maxLife=0.8f; p.size=5; p.noGravity=true;
+                        m.particles.push_back(p);
+                    }
+                }
+
+                // Mouvement : oscillation/teleport selon phase
+                e.patternCd -= adt;
+                if (e.phase >= 3 && e.patternCd <= 0) {
+                    // Teleport via portail
+                    e.patternCd = (e.phase==5) ? 2.5f : (e.phase==4 ? 3.5f : 5.f);
+                    for (int i=0; i<14; ++i) {
+                        Particle p; p.x=e.x; p.y=e.y;
+                        float a=rndF(0,6.28f);
+                        p.vx = std::cos(a)*100; p.vy = std::sin(a)*100;
+                        p.color = QColor("#bb44ff"); p.life=p.maxLife=0.5f; p.size=4; p.noGravity=true;
+                        m.particles.push_back(p);
+                    }
+                    e.x = clampF(m.player.x + rndF(-180,180), TILE*2, GW-TILE*2);
+                    e.y = clampF(m.player.y + rndF(-110,110), TILE*2, GH-TILE*2);
+                } else if (e.phase <= 2) {
+                    float mdx = e.moveTargetX-e.x, mdy = e.moveTargetY-e.y, md = std::hypot(mdx,mdy);
+                    if (md > 5) Collision::tryMove(m, e.x, e.y, mdx/md*e.speed*adt, mdy/md*e.speed*adt, collR);
+                    e.facingLeft = mdx < 0;
+                }
+
+                // Tir principal : convergent / spirale selon phase
+                e.shootCd -= adt;
+                if (e.shootCd <= 0) {
+                    e.shootCd = (e.phase>=4) ? 0.35f : (e.phase==3 ? 0.5f : (e.phase==2 ? 0.7f : 0.9f));
+                    float a = std::atan2(dy, dx);
+                    int n = 2 + e.phase;  // 3..7 tirs
+                    for (int i=0; i<n; ++i) {
+                        float off = (n>1) ? (i-(n-1)/2.f)*0.16f : 0;
+                        Bullet b; b.x = e.x; b.y = e.y;
+                        b.vx = std::cos(a+off)*230; b.vy = std::sin(a+off)*230;
+                        b.angle = a+off; b.damage = e.damage; b.enemy = true;
+                        m.bullets.push_back(b);
+                    }
+                }
+
+                // Spirale tournante (phase >= 2)
+                if (e.phase >= 2) {
+                    e.burstCd -= adt;
+                    if (e.burstCd <= 0) {
+                        e.burstCd = (e.phase==5) ? 1.5f : (e.phase==4 ? 2.0f : (e.phase==3 ? 2.5f : 3.5f));
+                        int rays = 8 + e.phase*2;
+                        float baseAng = m.globalTime * (e.phase==5 ? 1.5f : 0.7f);
+                        for (int i=0; i<rays; ++i) {
+                            float a = baseAng + (i/float(rays))*6.28f;
+                            Bullet b; b.x = e.x; b.y = e.y;
+                            b.vx = std::cos(a)*170; b.vy = std::sin(a)*170;
+                            b.angle = a; b.damage = 1; b.enemy = true;
+                            m.bullets.push_back(b);
+                        }
+                    }
+                }
+
+                // Invocations (phase >= 3)
+                if (e.phase >= 3) {
+                    e.summonCd -= adt;
+                    if (e.summonCd <= 0) {
+                        e.summonCd = (e.phase==5) ? 4.f : (e.phase==4 ? 5.f : 7.f);
+                        int n = (e.phase==5) ? 4 : (e.phase==4 ? 3 : 2);
+                        for (int i=0; i<n; ++i) {
+                            float ang = (i/float(n))*6.28f + rndF(-0.3f, 0.3f);
+                            float sx = e.x + std::cos(ang)*60, sy = e.y + std::sin(ang)*60;
+                            sx = clampF(sx, TILE*2, GW-TILE*2);
+                            sy = clampF(sy, TILE*2, GH-TILE*2);
+                            Room::spawnMinion(m, sx, sy, 40, 110, ET_Bat);
+                        }
+                    }
+                }
+
+                // Charges (phase >= 4)
+                if (e.phase >= 4) {
+                    e.chargeCd -= adt;
+                    if (e.chargeCd <= 0 && !e.charging) {
+                        e.chargeCd = (e.phase==5) ? 2.5f : 4.0f;
+                        e.charging = true; e.chargeT = 0.7f;
+                        float ca = std::atan2(dy, dx);
+                        float cs = (e.phase==5) ? 480.f : 380.f;
+                        e.chargeVx = std::cos(ca)*cs; e.chargeVy = std::sin(ca)*cs;
+                    }
+                    if (e.charging) {
+                        e.x += e.chargeVx*adt; e.y += e.chargeVy*adt;
+                        e.chargeT -= adt;
+                        if (e.chargeT <= 0) e.charging = false;
+                        e.x = clampF(e.x, TILE*1.5f, GW-TILE*1.5f);
+                        e.y = clampF(e.y, TILE*1.5f, GH-TILE*1.5f);
+                    }
+                }
+                e.facingLeft = (m.player.x < e.x);
+            }
+            if (e.anim==AN_Hurt && e.animTimer>0.4f) { e.anim=AN_Walk; e.animTimer=0; }
+            else if (e.anim!=AN_Hurt) e.anim = AN_Walk;
+        }
+        else if (e.type == ET_Elite) {
+            // ===== Elite : grosse brute qui tire + charge =====
+            e.auraPhase += adt * 2.5f;
+            if (d > 0) {
+                float dsign = (d > 220) ? 1.f : (d < 150 ? -0.6f : 0);
+                if (dsign != 0)
+                    Collision::tryMove(m, e.x, e.y, dx/d*e.speed*dsign*adt, dy/d*e.speed*dsign*adt, collR);
+                e.facingLeft = dx < 0;
+            }
+            e.shootCd -= adt;
+            if (e.shootCd <= 0 && d < 380) {
+                e.shootCd = rndF(0.9f, 1.5f);
+                float a = std::atan2(dy, dx);
+                for (float off : {-0.18f, 0.f, 0.18f}) {
+                    Bullet b; b.x = e.x; b.y = e.y;
+                    b.vx = std::cos(a+off)*210; b.vy = std::sin(a+off)*210;
+                    b.angle = a+off; b.damage = e.damage; b.enemy = true;
+                    m.bullets.push_back(b);
+                }
+            }
+            e.chargeCd -= adt;
+            if (e.chargeCd <= 0 && !e.charging && d < 280) {
+                e.chargeCd = 4.f;
+                e.charging = true; e.chargeT = 0.6f;
+                float ca = std::atan2(dy, dx);
+                e.chargeVx = std::cos(ca)*320; e.chargeVy = std::sin(ca)*320;
+            }
+            if (e.charging) {
+                e.x += e.chargeVx*adt; e.y += e.chargeVy*adt;
+                e.chargeT -= adt;
+                if (e.chargeT <= 0) e.charging = false;
+                e.x = clampF(e.x, TILE*1.5f, GW-TILE*1.5f);
+                e.y = clampF(e.y, TILE*1.5f, GH-TILE*1.5f);
             }
             if (e.anim==AN_Hurt && e.animTimer>0.4f) { e.anim=AN_Walk; e.animTimer=0; }
             else if (e.anim!=AN_Hurt) e.anim = AN_Walk;
