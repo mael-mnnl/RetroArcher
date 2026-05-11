@@ -26,6 +26,8 @@ public:
     void drawForge       (QPainter &p, const Model::GameModel &m, int hover);
     void drawBlessings   (QPainter &p, const Model::GameModel &m, int hover);
     void drawLeaderboard (QPainter &p, const Model::GameModel &m);
+    void drawPauseMenu   (QPainter &p, const Model::GameModel &m);
+    void drawBlackMarket (QPainter &p, const Model::GameModel &m, int hover);
 
 private:
     void drawSpriteAt(QPainter &p, const QImage &sheet, int frameCount, float fps,

@@ -861,4 +861,358 @@ void MenuView::drawLeaderboard(QPainter &p, const GameModel &m)
     p.drawText(CW/2 - ffm.horizontalAdvance(foot)/2, CH-12, foot);
 }
 
+// =============== MENU PAUSE ===============
+void MenuView::drawPauseMenu(QPainter &p, const GameModel &m)
+{
+    // Fond semi-transparent sur le jeu déjà rendu
+    QColor bg(0, 0, 0); bg.setAlpha(200);
+    p.fillRect(0, 0, CW, CH, bg);
+
+    // Panneau central
+    int px = 30, py = 20, pw = CW - 60, ph = CH - 40;
+    p.fillRect(px, py, pw, ph, QColor(12, 8, 22));
+    p.setPen(QPen(QColor("#5a3a8a"), 2)); p.setBrush(Qt::NoBrush);
+    p.drawRect(px, py, pw, ph); p.setPen(Qt::NoPen);
+
+    // Titre
+    QFont tf("monospace", 14, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString title = "PAUSE";
+    p.setPen(C_GOLD); p.drawText(CW/2 - tfm.horizontalAdvance(title)/2, py + 22, title);
+
+    // Onglets
+    const char *tabNames[3] = { "Competences", "Inventaire", "Sorts" };
+    QColor tabColors[3] = { QColor("#8844ff"), QColor("#44aaff"), QColor("#ff8844") };
+    int tabW = 130, tabH = 24, tabY = py + 30, tabGap = 4;
+    int totalTabW = 3*tabW + 2*tabGap;
+    int tabStartX = CW/2 - totalTabW/2;
+    for (int i = 0; i < 3; ++i) {
+        int tx = tabStartX + i*(tabW+tabGap);
+        bool sel = (m.pauseTab == i);
+        QColor bg2 = tabColors[i]; bg2.setAlpha(sel ? 180 : 60);
+        p.fillRect(tx, tabY, tabW, tabH, bg2);
+        p.setPen(QPen(sel ? tabColors[i] : tabColors[i].darker(150), sel ? 2 : 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(tx, tabY, tabW, tabH);
+        p.setPen(Qt::NoPen);
+        QFont bf("monospace", 8, QFont::Bold); p.setFont(bf); QFontMetrics bfm(bf);
+        QString lbl = QString("[%1] %2").arg(i+1).arg(tabNames[i]);
+        p.setPen(sel ? tabColors[i] : tabColors[i].darker(120));
+        p.drawText(tx + tabW/2 - bfm.horizontalAdvance(lbl)/2, tabY + 16, lbl);
+        p.setPen(Qt::NoPen);
+    }
+
+    int contentY = tabY + tabH + 8;
+    int contentH = ph - (contentY - py) - 30;
+
+    // ── Onglet 0 : Compétences ──
+    if (m.pauseTab == 0) {
+        QFont hf("monospace", 8); p.setFont(hf); QFontMetrics hfm(hf);
+        QString sub = QString("Power-ups actifs : %1/10").arg((int)m.player.skills.size());
+        p.setPen(QColor("#aaaaff"));
+        p.drawText(px + 10, contentY + 12, sub);
+
+        int cols = 2, cellH = 32, cellW = (pw - 20) / cols;
+        for (int i = 0; i < (int)m.player.skills.size() && i < 10; ++i) {
+            int col = i % cols, row = i / cols;
+            int cx = px + 10 + col * cellW;
+            int cy = contentY + 22 + row * cellH;
+            int sid = m.player.skills[i];
+            const Skill *sk = nullptr;
+            for (auto &s : m.allSkills) if (s.id == sid) { sk = &s; break; }
+            if (!sk) continue;
+            bool hover = (m.pauseSkillHover == i);
+            QColor bg3 = sk->color; bg3.setAlpha(hover ? 90 : 40);
+            p.fillRect(cx, cy, cellW - 4, cellH - 2, bg3);
+            p.setPen(QPen(sk->color, hover ? 2 : 1)); p.setBrush(Qt::NoBrush);
+            p.drawRect(cx, cy, cellW - 4, cellH - 2);
+            p.setPen(Qt::NoPen);
+            QFont nf("monospace", 8, QFont::Bold); p.setFont(nf);
+            p.setPen(sk->color);
+            p.drawText(cx + 6, cy + 12, sk->icon + " " + sk->name);
+            QFont df("monospace", 6); p.setFont(df);
+            p.setPen(QColor("#bbaaee"));
+            // Tronque la desc si trop longue
+            QString desc = sk->desc;
+            QFontMetrics dfm(df);
+            if (dfm.horizontalAdvance(desc) > cellW - 20)
+                desc = desc.left(desc.length() * (cellW - 20) / dfm.horizontalAdvance(desc));
+            p.drawText(cx + 6, cy + 24, desc);
+            p.setPen(Qt::NoPen);
+        }
+        if (m.player.skills.empty()) {
+            QFont mf("monospace", 8); p.setFont(mf); QFontMetrics mfm(mf);
+            p.setPen(QColor("#664466"));
+            QString msg = "Aucun power-up pour l'instant";
+            p.drawText(CW/2 - mfm.horizontalAdvance(msg)/2, contentY + contentH/2, msg);
+            p.setPen(Qt::NoPen);
+        }
+    }
+
+    // ── Onglet 1 : Inventaire ──
+    else if (m.pauseTab == 1) {
+        int slotY = contentY + 6;
+        const char *slotNames[3] = { "Arme", "Armure", "Accessoire" };
+        QColor slotColors[3] = { QColor("#ff6644"), QColor("#44aaff"), QColor("#44ff88") };
+        int slotW = (pw - 20) / 3, slotH = 56;
+
+        for (int s = 0; s < EQ__COUNT; ++s) {
+            int sx2 = px + 10 + s * slotW;
+            const EquipItem &eq = m.player.equipped[s];
+            QColor sc = slotColors[s]; sc.setAlpha(eq.empty ? 40 : 100);
+            p.fillRect(sx2, slotY, slotW - 4, slotH, sc);
+            p.setPen(QPen(slotColors[s], 2)); p.setBrush(Qt::NoBrush);
+            p.drawRect(sx2, slotY, slotW - 4, slotH);
+            p.setPen(Qt::NoPen);
+            QFont lf("monospace", 7, QFont::Bold); p.setFont(lf);
+            p.setPen(slotColors[s]);
+            p.drawText(sx2 + 4, slotY + 12, slotNames[s]);
+            if (!eq.empty) {
+                QFont nf("monospace", 7, QFont::Bold); p.setFont(nf);
+                p.setPen(eq.color);
+                p.drawText(sx2 + 4, slotY + 26, eq.name);
+                QFont df("monospace", 6); p.setFont(df);
+                p.setPen(QColor("#ccbbee"));
+                p.drawText(sx2 + 4, slotY + 38, eq.desc.left(20));
+            } else {
+                QFont ef("monospace", 7); p.setFont(ef);
+                p.setPen(QColor("#554466"));
+                p.drawText(sx2 + 4, slotY + 32, "(vide)");
+            }
+            p.setPen(Qt::NoPen);
+        }
+
+        // Sac
+        int bagY = slotY + slotH + 12;
+        QFont bh("monospace", 8, QFont::Bold); p.setFont(bh);
+        p.setPen(QColor("#ffd544"));
+        p.drawText(px + 10, bagY, QString("Sac (%1/8)").arg((int)m.player.bag.size()));
+        bagY += 14;
+
+        int itemW = (pw - 20) / 4, itemH = 48;
+        for (int i = 0; i < (int)m.player.bag.size() && i < 8; ++i) {
+            int col = i % 4, row = i / 4;
+            int ix = px + 10 + col * itemW;
+            int iy = bagY + row * (itemH + 4);
+            const EquipItem &it = m.player.bag[i];
+            bool hover = (m.pauseInvHover == i);
+            QColor ic = it.color; ic.setAlpha(hover ? 120 : 60);
+            p.fillRect(ix, iy, itemW - 4, itemH, ic);
+            p.setPen(QPen(hover ? it.color : it.color.darker(130), hover ? 2 : 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(ix, iy, itemW - 4, itemH);
+            p.setPen(Qt::NoPen);
+            QFont nf("monospace", 7, QFont::Bold); p.setFont(nf);
+            p.setPen(it.color);
+            p.drawText(ix + 4, iy + 14, it.name);
+            QFont df("monospace", 6); p.setFont(df);
+            p.setPen(QColor("#ccbbee"));
+            p.drawText(ix + 4, iy + 26, it.desc.left(18));
+            if (hover) {
+                p.setPen(QColor("#44ff88"));
+                p.drawText(ix + 4, iy + 40, "[ESPACE] equiper");
+            }
+            p.setPen(Qt::NoPen);
+        }
+        if (m.player.bag.empty()) {
+            QFont mf("monospace", 8); p.setFont(mf); QFontMetrics mfm(mf);
+            p.setPen(QColor("#664466"));
+            QString msg = "Sac vide - les ennemis droppent de l'equipement";
+            p.drawText(px + 10, bagY + 24, msg);
+            p.setPen(Qt::NoPen);
+        }
+    }
+
+    // ── Onglet 2 : Sorts ──
+    else if (m.pauseTab == 2) {
+        int sy = contentY + 6;
+        QFont sh("monospace", 8, QFont::Bold); p.setFont(sh);
+        p.setPen(QColor("#ff8844"));
+        p.drawText(px + 10, sy + 12, "Sorts equipes (touches 1-4 en jeu)");
+        sy += 18;
+
+        int spW = (pw - 20) / 4, spH = 80;
+        for (int i = 0; i < 4; ++i) {
+            int sx2 = px + 10 + i * spW;
+            int spId = m.player.spellSlots[i];
+            float cd = m.player.spellCds[i];
+            const SpellInfo *sp = nullptr;
+            for (auto &s : m.allSpells) if (s.id == spId) { sp = &s; break; }
+            bool hover = (m.pauseSpellHover == i);
+            QColor bc = sp ? sp->color : QColor("#555566");
+            bc.setAlpha(hover ? 120 : 60);
+            p.fillRect(sx2, sy, spW - 4, spH, bc);
+            QColor borderC = sp ? sp->color : QColor("#444455");
+            p.setPen(QPen(hover ? borderC : borderC.darker(130), hover ? 2 : 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(sx2, sy, spW - 4, spH);
+            p.setPen(Qt::NoPen);
+
+            QFont nf("monospace", 8, QFont::Bold); p.setFont(nf);
+            p.setPen(QColor("#ffd544"));
+            p.drawText(sx2 + 4, sy + 14, QString("[%1]").arg(i+1));
+
+            if (sp) {
+                p.setPen(sp->color);
+                p.drawText(sx2 + 4, sy + 28, sp->name);
+                QFont df("monospace", 6); p.setFont(df);
+                p.setPen(QColor("#ccbbee"));
+                p.drawText(sx2 + 4, sy + 40, sp->desc.left(22));
+                if (cd > 0) {
+                    p.setPen(QColor("#ff4444"));
+                    p.drawText(sx2 + 4, sy + 54, QString("CD: %1s").arg(cd, 0, 'f', 1));
+                } else {
+                    p.setPen(QColor("#44ff88"));
+                    p.drawText(sx2 + 4, sy + 54, "PRET");
+                }
+            } else {
+                QFont ef("monospace", 7); p.setFont(ef);
+                p.setPen(QColor("#554466"));
+                p.drawText(sx2 + 4, sy + 40, "(vide)");
+                p.setPen(QColor("#886688"));
+                p.drawText(sx2 + 4, sy + 56, "Achetez au");
+                p.drawText(sx2 + 4, sy + 66, "marche noir");
+            }
+            p.setPen(Qt::NoPen);
+        }
+
+        // Indication bouclier
+        if (m.player.shieldMax > 0) {
+            int shieldY = sy + spH + 14;
+            QFont shf("monospace", 8, QFont::Bold); p.setFont(shf);
+            p.setPen(QColor("#44aaff"));
+            p.drawText(px + 10, shieldY, QString("Bouclier : %1 / %2").arg(m.player.shieldHp).arg(m.player.shieldMax));
+        }
+    }
+
+    // Pied de page
+    QFont fft("monospace", 7); p.setFont(fft); QFontMetrics fftm(fft);
+    QString foot = "ESC : reprendre  -  1/2/3 : onglets  -  Fleches : naviguer  -  ESPACE : equiper";
+    p.setPen(QColor("#7766aa"));
+    p.drawText(CW/2 - fftm.horizontalAdvance(foot)/2, py + ph - 8, foot);
+}
+
+// =============== MARCHE NOIR ===============
+void MenuView::drawBlackMarket(QPainter &p, const GameModel &m, int hover)
+{
+    // Fond opaque (le jeu est visible derrière via gameview::render)
+    QColor bg(0, 0, 0); bg.setAlpha(210);
+    p.fillRect(0, 0, CW, CH, bg);
+
+    int px = 40, py = 30, pw = CW - 80, ph = CH - 60;
+    p.fillRect(px, py, pw, ph, QColor(8, 4, 18));
+    p.setPen(QPen(QColor("#aa44cc"), 2)); p.setBrush(Qt::NoBrush);
+    p.drawRect(px, py, pw, ph); p.setPen(Qt::NoPen);
+
+    QFont tf("monospace", 16, QFont::Bold); p.setFont(tf); QFontMetrics tfm(tf);
+    QString title = "MARCHE NOIR";
+    float pulse = 0.5f + 0.5f*std::sin(m.globalTime*2.5f);
+    QColor tc = QColor(180 + (int)(pulse*60), 60, 220);
+    p.setPen(tc);
+    p.drawText(CW/2 - tfm.horizontalAdvance(title)/2, py + 28, title);
+
+    QFont sf2("monospace", 7); p.setFont(sf2); QFontMetrics sfm(sf2);
+    p.setPen(QColor("#aa88cc"));
+    QString sub = "Achetez des sorts puissants - touches 1-4 pour acheter, 5-8 pour retirer";
+    p.drawText(CW/2 - sfm.horizontalAdvance(sub)/2, py + 44, sub);
+
+    // Or disponible
+    QFont gf("monospace", 9, QFont::Bold); p.setFont(gf); QFontMetrics gfm(gf);
+    p.setPen(QColor("#ffd544"));
+    QString gold = QString("Or : %1 $").arg(m.player.gold);
+    p.drawText(px + pw - gfm.horizontalAdvance(gold) - 10, py + 28, gold);
+
+    // 4 cartes de sorts à vendre
+    int n = std::min((int)m.blackMarketSpells.size(), 4);
+    int cardW = (pw - 20) / std::max(1, n), cardH = 150, cardsY = py + 56, gap = 4;
+    int totalW = n * cardW + (n-1) * gap;
+    int startX = CW/2 - totalW/2;
+
+    for (int i = 0; i < n; ++i) {
+        int spId = m.blackMarketSpells[i];
+        int price = (i < (int)m.blackMarketPrices.size()) ? m.blackMarketPrices[i] : 30;
+        const SpellInfo *sp = nullptr;
+        for (auto &s : m.allSpells) if (s.id == spId) { sp = &s; break; }
+        if (!sp) continue;
+
+        int cx = startX + i * (cardW + gap);
+        bool sel = (hover == i);
+        bool canAfford = m.player.gold >= price;
+
+        QColor cardBg = sp->color; cardBg.setAlpha(sel ? 100 : 50);
+        p.fillRect(cx, cardsY, cardW, cardH, cardBg);
+        p.setPen(QPen(sel ? sp->color : sp->color.darker(140), sel ? 2 : 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(cx, cardsY, cardW, cardH);
+        p.setPen(Qt::NoPen);
+
+        // Numéro de touche
+        QFont kf("monospace", 22, QFont::Bold); p.setFont(kf);
+        QFontMetrics kfm(kf);
+        QString k = QString::number(i+1);
+        p.setPen(sel ? sp->color : sp->color.darker(130));
+        p.drawText(cx + cardW/2 - kfm.horizontalAdvance(k)/2, cardsY + 32, k);
+
+        // Nom du sort
+        QFont nf("monospace", 9, QFont::Bold); p.setFont(nf);
+        QFontMetrics nfm(nf);
+        p.setPen(sp->color);
+        p.drawText(cx + cardW/2 - nfm.horizontalAdvance(sp->name)/2, cardsY + 50, sp->name);
+
+        // Description
+        QFont df("monospace", 6); p.setFont(df); QFontMetrics dfm(df);
+        p.setPen(QColor("#ccbbee"));
+        QStringList words = sp->desc.split(' ');
+        QString line; int dy = cardsY + 66;
+        for (auto &w : words) {
+            QString test = line.isEmpty() ? w : line + " " + w;
+            if (dfm.horizontalAdvance(test) > cardW - 12) {
+                p.drawText(cx + cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+                dy += 12; line = w;
+            } else line = test;
+        }
+        if (!line.isEmpty())
+            p.drawText(cx + cardW/2 - dfm.horizontalAdvance(line)/2, dy, line);
+
+        // Prix
+        QFont prf("monospace", 9, QFont::Bold); p.setFont(prf);
+        QFontMetrics prfm(prf);
+        QString priceStr = QString("%1 $").arg(price);
+        QColor priceC = canAfford ? QColor("#ffd544") : QColor("#aa4422");
+        p.setPen(priceC);
+        p.drawText(cx + cardW/2 - prfm.horizontalAdvance(priceStr)/2, cardsY + cardH - 12, priceStr);
+        p.setPen(Qt::NoPen);
+    }
+
+    // Sorts actuellement équipés (résumé)
+    int slotY = cardsY + cardH + 14;
+    QFont slh("monospace", 8, QFont::Bold); p.setFont(slh);
+    p.setPen(QColor("#aa88cc"));
+    p.drawText(px + 10, slotY, "Sorts equipes :");
+    slotY += 14;
+
+    for (int i = 0; i < 4; ++i) {
+        int spId = m.player.spellSlots[i];
+        const SpellInfo *sp = nullptr;
+        for (auto &s : m.allSpells) if (s.id == spId) { sp = &s; break; }
+        int slotX = px + 10 + i * (pw / 4);
+        QFont sf3("monospace", 7, QFont::Bold); p.setFont(sf3);
+        QColor slotC = sp ? sp->color : QColor("#554466");
+        p.setPen(slotC);
+        QString slotTxt = QString("[%1] %2").arg(i+1).arg(sp ? sp->name : "(vide)");
+        p.drawText(slotX, slotY + 12, slotTxt);
+        if (sp) {
+            QFont rf("monospace", 6); p.setFont(rf);
+            p.setPen(QColor("#887799"));
+            p.drawText(slotX, slotY + 24, QString("[%1] retirer").arg(i+5));
+        }
+        p.setPen(Qt::NoPen);
+    }
+
+    // Pied de page
+    QFont fft("monospace", 7); p.setFont(fft); QFontMetrics fftm(fft);
+    QString foot = "ESC : quitter";
+    p.setPen(QColor("#7766aa"));
+    p.drawText(CW/2 - fftm.horizontalAdvance(foot)/2, py + ph - 8, foot);
+}
+
 }

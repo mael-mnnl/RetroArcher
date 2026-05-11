@@ -6,6 +6,7 @@
 #include <QString>
 #include <QSet>
 #include <vector>
+#include <array>
 
 namespace Model {
 
@@ -36,6 +37,7 @@ struct Bullet {
     bool burn = false;
     bool homing = false;
     bool ghost = false;
+    bool electric = false;
     QSet<int> hitIds;
 };
 
@@ -74,6 +76,8 @@ struct Enemy {
     float burnTimer = 0;
     float burnDps = 0;
     float deathMark = 0;
+    float stunTimer = 0;   // étourdissement (immobile, ne tire pas)
+    int   corrodStacks = 0; // stacks d'acide (jusqu'à 3, -15% def chacun)
 
     // Boss patterns
     float chargeCd = 0;
@@ -87,11 +91,39 @@ struct Enemy {
 
     // Elite / Malificus
     bool  elite = false;
-    int   eliteVariant = 0;   // sprite key (0..3)
-    float auraPhase = 0;      // pour aura colorée pulsée
-    float dropChance = 0;     // pour drop garanti
-    int   malificusPattern = 0;  // pattern courant (rotation)
+    int   eliteVariant = 0;
+    float auraPhase = 0;
+    float dropChance = 0;
+    int   malificusPattern = 0;
     float patternCd = 0;
+};
+
+// Pièce d'équipement (droppée par ennemis)
+struct EquipItem {
+    EquipType   type     = EQ_Weapon;
+    EquipRarity rarity   = ER_Common;
+    QString     name;
+    QString     desc;
+    QColor      color;
+    // Modificateurs de stats
+    float dmgMul      = 1.0f;
+    float speedMul    = 1.0f;
+    float fireRateMul = 1.0f;
+    float spellDmgMul = 1.0f;
+    int   shieldMax   = 0;    // points de shield (armure)
+    float dodgeBonus  = 0.0f;
+    int   goldBonus   = 0;    // bonus or par kill
+    bool  empty       = true; // slot vide
+};
+
+// Informations sur un sort
+struct SpellInfo {
+    SpellId  id;
+    QString  name;
+    QString  desc;
+    QColor   color;
+    float    baseCd;     // cooldown de base en secondes
+    int      baseCost;   // prix au marché noir
 };
 
 struct Player {
@@ -139,16 +171,55 @@ struct Player {
     float burstQueueTimer = 0;
     float chargeShotPower = 0;
 
-    // ----- v8 new fields -----
+    // v8 fields
     int   classId = 0;
     int   relicId = -1;
     int   gold = 0;
-    int   tempScrollSkillId = -1;   // parchemin actif (1 boss)
+    int   tempScrollSkillId = -1;
     int   tempScrollBossId  = -1;
-    bool  challengeNoHit = true;    // pour salle defi
+    bool  challengeNoHit = true;
     bool  inChallenge = false;
     float dashAimX = 0, dashAimY = 0;
     bool  hasDashAim = false;
+
+    // ── Sorts (4 slots, touches 1-4) ──
+    std::array<int, 4>   spellSlots = {-1, -1, -1, -1};  // SpellId ou -1
+    std::array<float, 4> spellCds   = {0, 0, 0, 0};
+
+    // ── Bouclier (issu de l'armure) ──
+    int   shieldHp    = 0;   // points actuels
+    int   shieldMax   = 0;   // points max (0 = pas de bouclier)
+    float shieldRegen = 0;   // timer de regen entre salles
+
+    // ── Équipement (3 slots : arme, armure, accessoire) ──
+    EquipItem equipped[EQ__COUNT];
+
+    // ── Inventaire (sac) ──
+    std::vector<EquipItem> bag;   // max 8 items
+
+    // ── Compteurs pour nouveaux skills ──
+    float overloadTimer  = 0;  // SK_OVERLOAD : temps sans dégâts
+    bool  overloadReady  = false;
+    int   reaperKills    = 0;  // SK_REAPER_STACKS
+    float frenzyTimer    = 0;  // SK_FRENZY : timer des 10s
+    int   frenzyKills    = 0;
+    float frenzyBuff     = 0;  // SK_FRENZY : durée du buff actif
+    float momentumDist   = 0;  // SK_MOMENTUM : distance parcourue
+    float awakenBuff     = 0;  // SK_AWAKENING : timer buff salle
+    float awakenMul      = 1.0f;
+    int   roomKills      = 0;  // kills dans la salle courante
+    bool  barrierRoomUsed= false; // SK_BARRIER_ROOM
+    bool  warcryDone     = false; // SK_WARCRY
+    float voidStepCd     = 0;  // SK_VOID_STEP
+    float voidStepActive = 0;
+    bool  soulStoneUsed  = false; // SK_SOUL_STONE
+    float spellDmgMul    = 1.0f;  // multiplicateur sorts (équipement + skills)
+    int   dashCharges    = 1;     // SK_DOUBLE_DASH
+    int   dashChargesMax = 1;
+    float dashChargeTimer= 0;
+    int   shotCounter    = 0;     // SK_LUCKY_SHOT compteur
+    float accelerateMul  = 1.0f;  // SK_ACCELERATE
+    float accelerateTimer= 0;
 };
 
 struct Skill {
@@ -172,22 +243,21 @@ struct WorldInfo {
     QColor  accent;
 };
 
-// ------- Nouveaux types pour v8 -------
-
 struct Pickup {
     PickupType type = PU_Gold;
     float x = 0, y = 0;
-    float vx = 0, vy = 0;     // pour le bounce initial
+    float vx = 0, vy = 0;
     float bobPhase = 0;
-    float lifeSec = 20.f;     // disparait apres
-    int   value = 1;          // gold/potion strength
-    int   scrollSkillId = -1; // si Scroll
+    float lifeSec = 20.f;
+    int   value = 1;
+    int   scrollSkillId = -1;
+    EquipItem equipItem;   // rempli si type == PU_EquipDrop
 };
 
 struct ObstacleTile {
     int col, row;
-    int kind;                 // 0 = pillar, 1 = crate, 2 = brazier/torch
-    float anim = 0;           // pour braseros animes
+    int kind;
+    float anim = 0;
 };
 
 struct CurseInfo {
@@ -214,7 +284,7 @@ struct ClassInfo {
     float baseFireRate;
     float baseDamage;
     int   startGrenade;
-    int   startSkillId;       // -1 = aucun
+    int   startSkillId;
 };
 
 struct ScorePopup {
@@ -226,7 +296,6 @@ struct ScorePopup {
     float   scale = 1.0f;
 };
 
-// Effet visuel d'arrière-plan/sol par monde
 struct BiomeParticle {
     float x, y, vx, vy;
     QColor color;
@@ -243,9 +312,8 @@ struct LeaderEntry {
     qint64 timestamp;
 };
 
-// FX sprite-based (explosions, portails, etc.)
 struct FxEffect {
-    QString sheetKey;   // "fx_fire", "fx_portal", ...
+    QString sheetKey;
     int  frameCount;
     int  frameW;
     int  frameH;
@@ -255,6 +323,19 @@ struct FxEffect {
     float timer = 0;
     bool  alive = true;
 };
+
+// Clone fantôme laissé par SK_SHADOW_DASH
+struct ShadowClone {
+    float x, y;
+    float life = 2.0f;
+};
+
+// Flaque de lave (SK_MAGMA)
+struct LavaTile {
+    float x, y;
+    float life = 4.0f;
+};
+
 }
 
 #endif

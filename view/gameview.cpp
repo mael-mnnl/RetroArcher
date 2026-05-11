@@ -221,6 +221,19 @@ void GameView::drawHUD(QPainter &p, const GameModel &m)
         p.setPen(C_GOLD);
         p.drawText(28+8*15+4, GH+18, QString("+%1").arg((int)m.player.maxHp - 8));
     }
+    // Bouclier (barre bleue sous les PV)
+    if (m.player.shieldMax > 0) {
+        int shW = std::min(8, m.player.shieldMax) * 15;
+        p.setFont(QFont("monospace", 9, QFont::Bold));
+        p.setPen(QColor("#44aaff")); p.drawText(8, GH+34, "BL");
+        for (int i = 0; i < std::min(m.player.shieldMax, 8); ++i) {
+            bool full = i < m.player.shieldHp;
+            QColor sc = full ? QColor("#44aaff") : QColor("#1a3355");
+            p.fillRect(QRectF(28+i*15, GH+24, 12, 8), sc);
+            if (full) p.fillRect(QRectF(30+i*15, GH+25, 4, 2), QColor("#aaddff"));
+        }
+        (void)shW;
+    }
     if (m.player.grenadeAmmo > 0 || Controller::Skills::hasSkill(m, SK_GRN)) {
         QFont gf("monospace", 7, QFont::Bold);
         p.setFont(gf); p.setPen(QColor("#ff8844"));
@@ -242,6 +255,44 @@ void GameView::drawHUD(QPainter &p, const GameModel &m)
         QFont gf("monospace", 7, QFont::Bold);
         p.setFont(gf); p.setPen(QColor("#ffcc44"));
         p.drawText(GW - 80, GH+18, QString("$ %1").arg(m.player.gold));
+    }
+    // Sorts (slots 1-4, affichés à droite du HUD)
+    {
+        QFont sf("monospace", 6, QFont::Bold); p.setFont(sf);
+        int slotW = 32, slotH = 22, slotStartX = GW - 4 * (slotW + 2) - 4;
+        for (int i = 0; i < 4; ++i) {
+            int spId = m.player.spellSlots[i];
+            float cd = m.player.spellCds[i];
+            int sx = slotStartX + i * (slotW + 2);
+            int sy = GH + 30;
+            const SpellInfo *sp = nullptr;
+            for (auto &s : m.allSpells) if (s.id == spId) { sp = &s; break; }
+            QColor bgc = sp ? sp->color : QColor("#222233");
+            bgc.setAlpha(sp ? 120 : 60);
+            p.fillRect(sx, sy, slotW, slotH, bgc);
+            // Barre de cooldown
+            if (sp && cd > 0) {
+                float cdBase = sp->baseCd;
+                float fill = 1.f - std::min(1.f, cd / std::max(0.01f, cdBase));
+                QColor cdC(20, 15, 35, 200);
+                p.fillRect(QRectF(sx, sy, slotW * (1.f - fill), slotH), cdC);
+            }
+            QColor borderC = sp ? sp->color : QColor("#444455");
+            p.setPen(QPen(borderC, 1)); p.setBrush(Qt::NoBrush);
+            p.drawRect(sx, sy, slotW, slotH); p.setPen(Qt::NoPen);
+            // Numéro de slot
+            p.setPen(QColor("#ffd544"));
+            p.drawText(sx + 2, sy + 8, QString::number(i+1));
+            // Nom du sort (court)
+            if (sp) {
+                p.setPen(cd > 0 ? QColor("#886699") : sp->color);
+                p.drawText(sx + 2, sy + 18, sp->name.left(6));
+            } else {
+                p.setPen(QColor("#444455"));
+                p.drawText(sx + 2, sy + 18, "---");
+            }
+            p.setPen(Qt::NoPen);
+        }
     }
     // Boss bar
     const Enemy *boss = nullptr;

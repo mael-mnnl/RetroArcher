@@ -14,6 +14,7 @@ SOURCES += \
     model/worldsdata.cpp \
     model/savemanager.cpp \
     model/contentdata.cpp \
+    model/spellsdata.cpp \
     view/assetmanager.cpp \
     view/gameview.cpp \
     view/menuview.cpp \
@@ -31,7 +32,8 @@ SOURCES += \
     controller/pickupsystem.cpp \
     controller/scoresystem.cpp \
     controller/biomefxsystem.cpp \
-    controller/levelgen.cpp
+    controller/levelgen.cpp \
+    controller/spellsystem.cpp
 
 HEADERS += \
     gamewidget.h \
@@ -45,6 +47,7 @@ HEADERS += \
     model/worldsdata.h \
     model/savemanager.h \
     model/contentdata.h \
+    model/spellsdata.h \
     view/assetmanager.h \
     view/gameview.h \
     view/menuview.h \
@@ -62,6 +65,7 @@ HEADERS += \
     controller/pickupsystem.h \
     controller/scoresystem.h \
     controller/biomefxsystem.h \
-    controller/levelgen.h
+    controller/levelgen.h \
+    controller/spellsystem.h
 
 RESOURCES += resources.qrc

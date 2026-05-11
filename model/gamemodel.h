@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QVector>
 #include <vector>
+#include <array>
 
 namespace Model {
 
@@ -58,7 +59,7 @@ struct GameModel {
     float   dlgTimer = 0;
     float   dlgFadeIn = 0;
 
-    // ----- v8 -----
+    // v8
     RoomType roomType = RT_Normal;
     std::vector<ObstacleTile> obstacles;
     std::vector<Pickup>       pickups;
@@ -74,37 +75,37 @@ struct GameModel {
     int selectedRelicId = -1;
     std::vector<int> relicChoices;
 
-    // Class selection
+    // Class
     int  selectedClassId = 0;
-    bool runHasFreeRevive = false;   // pour Phoenix Tear
+    bool runHasFreeRevive = false;
 
-    // Meta-progression "blessings"
-    int  blessingMaxHpBonus = 0;     // +1 PV max au depart
-    int  blessingStartGold  = 0;     // +50 gold au depart
-    bool blessingFreeSkill  = false; // +1 skill choice au debut
+    // Meta-progression
+    int  blessingMaxHpBonus = 0;
+    int  blessingStartGold  = 0;
+    bool blessingFreeSkill  = false;
     int  blessingPointsSpent= 0;
     int  blessingPointsAvail= 0;
 
-    // Ascension (mode hardcore)
+    // Ascension
     bool ascensionUnlocked = false;
     bool ascensionEnabled  = false;
 
-    // Shop / Forge state
-    std::vector<int> shopItems;      // skill IDs en vente
+    // Shop / Forge
+    std::vector<int> shopItems;
     std::vector<int> shopPrices;
     int   forgeSelectedSkillIdx = -1;
 
-    // Challenge state
+    // Challenge
     bool challengeStarted = false;
     bool challengePassed  = true;
 
-    // Combo / score popups
-    int   killStreakBig = 0;         // streak pour affichage popup
+    // Combo / score
+    int   killStreakBig = 0;
     float killStreakBigTimer = 0;
     float perfectRoomTimer = 0;
-    int   lastBossHurtCount = 0;     // pour traquer no-hit boss
+    int   lastBossHurtCount = 0;
 
-    // Lord Malificus (monde 6)
+    // Lord Malificus
     bool malificusUnlocked = false;
     int  bossesKilledThisRun = 0;
 
@@ -114,10 +115,28 @@ struct GameModel {
     // Leaderboard
     std::vector<LeaderEntry> leaderboard;
 
-    // Tables look-up
-    std::vector<CurseInfo> allCurses;
-    std::vector<RelicInfo> allRelics;
-    std::vector<ClassInfo> allClasses;
+    // Data tables
+    std::vector<CurseInfo>  allCurses;
+    std::vector<RelicInfo>  allRelics;
+    std::vector<ClassInfo>  allClasses;
+
+    // ── Sorts ──
+    std::vector<SpellInfo> allSpells;    // catalogue de tous les sorts
+
+    // ── Marché noir ──
+    std::vector<int>   blackMarketSpells;   // SpellId en vente (4 max)
+    std::vector<int>   blackMarketPrices;
+
+    // ── Menu pause ──
+    int pauseTab        = 0;  // 0=compétences 1=inventaire 2=sorts
+    int pauseSkillHover = 0;
+    int pauseInvHover   = 0;  // hover dans le sac
+    int pauseSpellHover = 0;
+    GameState stateBeforePause = GS_Playing;
+
+    // ── Entités de gameplay nouvelles ──
+    std::vector<ShadowClone> shadowClones;
+    std::vector<LavaTile>    lavaTiles;
 };
 
 }

@@ -40,11 +40,12 @@ private:
     qint64        m_lastTickNs = 0;
 
     // UI hovers
-    int m_classHover    = 0;
-    int m_relicHover    = 0;
-    int m_shopHover     = 0;
-    int m_forgeHover    = 0;
-    int m_blessingHover = 0;
+    int m_classHover         = 0;
+    int m_relicHover         = 0;
+    int m_shopHover          = 0;
+    int m_forgeHover         = 0;
+    int m_blessingHover      = 0;
+    int m_blackMarketHover   = 0;
 };
 
 #endif
