@@ -24,12 +24,24 @@ float damageMul(const GameModel &m)
     if (hasSkill(m, SK_BIG_ARROW))  mul *= 1.20f;
     if (hasSkill(m, SK_BLOOD_PACT)) mul *= 1.25f;
     if (hasSkill(m, SK_HEAVY))      mul *= 1.45f;
+    if (hasSkill(m, SK_HEAVY_ARROW))mul *= 1.35f;
     if (hasSkill(m, SK_RECKLESS))   mul *= 1.40f;
     if (hasSkill(m, SK_BERSERKER) && m.player.hp < m.player.maxHp * 0.35f) mul *= 1.5f;
     if (hasSkill(m, SK_RAGE_STACK)) mul *= (1.f + 0.05f * std::min(10, m.player.rageStacks));
     if (hasSkill(m, SK_LEGEND))     mul *= (1.f + 0.10f * m.player.bossesKilled);
+    if (hasSkill(m, SK_LEGEND_HUNTER)) mul *= (1.f + 0.05f * std::min(6, m.player.bossesKilled));
     if (hasSkill(m, SK_MASTERY))    mul *= 1.18f;
     if (hasSkill(m, SK_FOCUSED) && m.player.stillSec >= 1.f) mul *= 1.25f;
+    if (hasSkill(m, SK_GLASS_CANNON)) mul *= 1.80f;
+    if (hasSkill(m, SK_REAPER_STACKS)) mul *= (1.f + 0.01f * std::min(40, m.player.reaperKills));
+    if (hasSkill(m, SK_FRENZY) && m.player.frenzyBuff > 0) mul *= 1.50f;
+    if (hasSkill(m, SK_OVERLOAD) && m.player.overloadReady) mul *= 5.0f;
+    if (hasSkill(m, SK_MOMENTUM)) mul *= (1.f + 0.03f * std::min(10.f, m.player.momentumDist / 100.f));
+    if (hasSkill(m, SK_STAR_POWER) && m.player.killStreakCount >= 200) mul *= 1.20f;
+    if (hasSkill(m, SK_PERSEVERANCE)) mul *= (1.f + 0.10f * std::min(5, m.player.bossesKilled));
+    if (hasSkill(m, SK_AWAKENING) && m.player.awakenBuff > 0) mul *= m.player.awakenMul;
+    // Équipement
+    for (int s = 0; s < EQ__COUNT; ++s) if (!m.player.equipped[s].empty) mul *= m.player.equipped[s].dmgMul;
     return mul;
 }
 
@@ -39,20 +51,27 @@ float speedMul(const GameModel &m)
     if (hasSkill(m, SK_SPD))        mul *= 1.15f;
     if (hasSkill(m, SK_LIGHT_FOOT)) mul *= 1.08f;
     if (hasSkill(m, SK_TANK))       mul *= 0.90f;
+    if (hasSkill(m, SK_HEAVY_ARROW))mul *= 0.88f;
     if (m.player.adrenalineTimer > 0) mul *= 1.30f;
     if (hasSkill(m, SK_LEGEND))     mul *= (1.f + 0.05f * m.player.bossesKilled);
     if (hasSkill(m, SK_MASTERY))    mul *= 1.18f;
+    if (hasSkill(m, SK_GLASS_CANNON)) mul *= 1.10f;
+    // Équipement
+    for (int s = 0; s < EQ__COUNT; ++s) if (!m.player.equipped[s].empty) mul *= m.player.equipped[s].speedMul;
     return mul;
 }
 
 float fireRateMul(const GameModel &m)
 {
     float mul = 1.f;
-    if (hasSkill(m, SK_FST))        mul *= 0.78f;
-    if (hasSkill(m, SK_BIG_ARROW))  mul *= 1.08f;
-    if (hasSkill(m, SK_HEAVY))      mul *= 1.18f;
+    if (hasSkill(m, SK_FST))           mul *= 0.78f;
+    if (hasSkill(m, SK_RAPID_RELOAD))  mul *= 0.80f;
+    if (hasSkill(m, SK_BIG_ARROW))     mul *= 1.08f;
+    if (hasSkill(m, SK_HEAVY))         mul *= 1.18f;
     if (m.player.hp < m.player.maxHp * 0.25f && hasSkill(m, SK_LAST_HOPE)) mul *= 0.50f;
-    if (hasSkill(m, SK_MASTERY))    mul *= 0.85f;
+    if (hasSkill(m, SK_MASTERY))       mul *= 0.85f;
+    // Équipement
+    for (int s = 0; s < EQ__COUNT; ++s) if (!m.player.equipped[s].empty) mul *= m.player.equipped[s].fireRateMul;
     return mul;
 }
 
@@ -65,7 +84,12 @@ float incomingDmgMul(const GameModel &m)
 }
 
 int pierceLevel(const GameModel &m) { return hasSkill(m, SK_PRC) ? 1 : 0; }
-int bounceLevel(const GameModel &m) { return hasSkill(m, SK_BNC) ? 1 : 0; }
+int bounceLevel(const GameModel &m) {
+    int b = 0;
+    if (hasSkill(m, SK_BNC)) b += 1;
+    if (hasSkill(m, SK_RICOCHET_PLUS)) b += 2;
+    return b;
+}
 
 void generateSkills(GameModel &m)
 {
@@ -95,7 +119,12 @@ void applySkill(GameModel &m, int skillId, void (*onAfter)(GameModel&))
     else if (skillId == SK_BLOOD_PACT)  { m.player.maxHp = std::max(1.f, m.player.maxHp-1);
                                           m.player.hp = std::min(m.player.maxHp, m.player.hp); }
     else if (skillId == SK_GRN)         m.player.grenadeAmmo += 3;
+    else if (skillId == SK_GLASS_CANNON){ m.player.maxHp = std::max(1.f, m.player.maxHp-2);
+                                          m.player.hp = std::min(m.player.maxHp, m.player.hp); }
+    else if (skillId == SK_DOUBLE_DASH) { m.player.dashChargesMax = 2; m.player.dashCharges = 2; }
 
+    // Limite à 10 slots de power-up
+    if ((int)m.player.skills.size() >= 10) return;
     m.player.skills.push_back(skillId);
     m.player.hp = std::min(m.player.maxHp, m.player.hp + 1.f);
 

@@ -6,6 +6,7 @@
 #include "scoresystem.h"
 #include "relicsystem.h"
 #include "cursesystem.h"
+#include "roombuilder.h"
 #include "../model/gamemodel.h"
 #include "../model/types.h"
 #include "../core/utils.h"
@@ -33,6 +34,12 @@ void shootPlayer(GameModel &m)
     }
     if (!near) return;
 
+    // SK_LIFE_TAP / SK_BLOOD_ARROWS : coûte des PV
+    if ((Skills::hasSkill(m, SK_LIFE_TAP) || Skills::hasSkill(m, SK_BLOOD_ARROWS))
+        && pl.hp > 0.2f) {
+        pl.hp = std::max(0.1f, pl.hp - 0.15f);
+    }
+
     bool prc = Skills::pierceLevel(m) > 0;
     int  bnc = Skills::bounceLevel(m);
     bool tri = Skills::hasSkill(m, SK_TRI);
@@ -50,6 +57,12 @@ void shootPlayer(GameModel &m)
     if (Skills::hasSkill(m, SK_RANGE)) speed *= 1.30f;
 
     float dmg = pl.damage * Skills::damageMul(m) * Relic::damageDealtMul(m);
+    // SK_LIFE_TAP / SK_BLOOD_ARROWS bonus dégâts
+    if (Skills::hasSkill(m, SK_LIFE_TAP) || Skills::hasSkill(m, SK_BLOOD_ARROWS)) dmg *= 1.60f;
+    // SK_LUCKY_SHOT
+    if (Skills::hasSkill(m, SK_LUCKY_SHOT) && pl.shotCounter == 6) dmg *= 2.0f;
+    // SK_ACID_BURN : poison+brûlure sur cible = +50% prochain hit
+    if (Skills::hasSkill(m, SK_ACID_BURN) && near && near->poisonTimer > 0 && near->burnTimer > 0) dmg *= 1.5f;
     if (Skills::hasSkill(m, SK_HUNTER) && nd > 200.f) dmg *= 1.25f;
     if (Skills::hasSkill(m, SK_DEATH_MARK) && pl.nextEnemyMarked == near->id) {
         dmg *= 1.30f; pl.nextEnemyMarked = -1;
@@ -94,8 +107,35 @@ void shootPlayer(GameModel &m)
         fire(a, 0, 0, useDmg);
     }
     if (dia) { fire(a + M_PI/4, 0, 0, dmg*0.85f); fire(a - M_PI/4, 0, 0, dmg*0.85f); }
+
+    // SK_MULTISHOT : 5 flèches si pas déjà multi
+    if (Skills::hasSkill(m, SK_MULTISHOT) && !tri && !quad) {
+        for (int k = -2; k <= 2; ++k)
+            if (k != 0) fire(a + k*0.22f, 0, 0, dmg*0.70f);
+    }
+
+    // SK_ECHO
     if (Skills::hasSkill(m, SK_ECHO) && QRandomGenerator::global()->generateDouble() < 0.18)
         pl.burstQueueTimer = 0.08f;
+
+    // SK_THUNDER_ARROW : 25% chance d'éclair enchaîné
+    if (Skills::hasSkill(m, SK_THUNDER_ARROW) && near
+        && QRandomGenerator::global()->generateDouble() < 0.25) {
+        // trouver un second ennemi proche de la cible
+        for (auto &en : m.enemies) {
+            if (en.dead || &en == near) continue;
+            if (distF(en.x, en.y, near->x, near->y) < 80) {
+                hurtEnemy(m, en, dmg * 0.60f);
+                break;
+            }
+        }
+    }
+
+    // SK_EXECUTE : kill instantané < 8% PV
+    if (Skills::hasSkill(m, SK_EXECUTE) && near && !near->dead
+        && near->hp < near->maxHp * 0.08f) {
+        hurtEnemy(m, *near, near->hp + 1.f);
+    }
 }
 
 void throwGrenade(GameModel &m)
@@ -137,7 +177,24 @@ void activateTimeStop(GameModel &m)
 void hurtPlayer(GameModel &m, float d)
 {
     if (m.cheatInvincible) return;
-    if (m.player.invincibility > 0 || m.player.dashActive > 0) return;
+    if (m.player.invincibility > 0 || m.player.dashActive > 0 || m.player.voidStepActive > 0) return;
+    // Bouclier absorbe en premier
+    if (m.player.shieldHp > 0) {
+        m.player.shieldHp--;
+        m.player.invincibility = 0.4f;
+        for (int i=0; i<6; ++i) {
+            Particle p; p.x = m.player.x + rndF(-10,10); p.y = m.player.y + rndF(-10,10);
+            p.vx = rndF(-80,80); p.vy = rndF(-100,-20);
+            p.color = QColor("#88aaff"); p.life = p.maxLife = rndF(0.2f,0.4f); p.size = 3;
+            m.particles.push_back(p);
+        }
+        return;
+    }
+    // SK_OVERLOAD : réinitialiser le timer
+    m.player.overloadTimer  = 0;
+    m.player.overloadReady  = false;
+    // SK_MOMENTUM : réinitialiser
+    m.player.momentumDist   = 0;
     m.player.hp = std::max(0.f, m.player.hp - d);
     float invul = 0.8f;
     if (Skills::hasSkill(m, SK_RESILIENCE)) invul *= 1.5f;
@@ -163,6 +220,8 @@ void hurtPlayer(GameModel &m, float d)
 
 void hurtEnemy(GameModel &m, Enemy &e, float dmg, bool fromExplosion)
 {
+    // Corrosion : réduit la défense (chaque stack = +15% dmg reçus)
+    dmg *= (1.f + e.corrodStacks * 0.15f);
     e.hp -= dmg; e.hitFlash = 0.18f;
 
     if (Skills::hasSkill(m, SK_FRZ_NERFED))   e.slowTimer = std::max(e.slowTimer, 1.0f);
@@ -202,8 +261,11 @@ void hurtEnemy(GameModel &m, Enemy &e, float dmg, bool fromExplosion)
         // Score popup + streak
         Score::onKill(m);
 
-        // Drop loot (pas pour les boss qui ont leur propre logique fragment)
-        if (e.type < ET_MiniBoss) Pickup::tryRandomDrop(m, e.x, e.y, e.elite);
+        // Drop loot
+        if (e.type < ET_MiniBoss) {
+            Pickup::tryRandomDrop(m, e.x, e.y, e.elite);
+            Room::tryEquipDropOnKill(m, e);
+        }
         if (e.elite) {
             // Drop garanti
             Pickup::spawnChest(m, e.x, e.y);
@@ -230,6 +292,53 @@ void hurtEnemy(GameModel &m, Enemy &e, float dmg, bool fromExplosion)
         m.player.killStreakCount++;
         m.player.killStreakTimer = 5.f;
         m.player.frostNovaKills++;
+        m.player.roomKills++;
+        m.player.reaperKills = std::min(40, m.player.reaperKills + 1);
+
+        // SK_REGEN_BURST
+        if (Skills::hasSkill(m, SK_REGEN_BURST) && m.player.regenAfterKillCd <= 0) {
+            m.player.hp = std::min(m.player.maxHp, m.player.hp + 0.5f);
+            m.player.regenAfterKillCd = 3.f;
+        }
+        // SK_FRENZY : 5 kills en 10s
+        if (Skills::hasSkill(m, SK_FRENZY)) {
+            m.player.frenzyKills++;
+            m.player.frenzyTimer = 10.f;
+            if (m.player.frenzyKills >= 5) { m.player.frenzyBuff = 5.f; m.player.frenzyKills = 0; }
+        }
+        // SK_EARTHQUAKE : tous les 8 kills
+        if (Skills::hasSkill(m, SK_EARTHQUAKE) && m.player.roomKills % 8 == 0) {
+            for (auto &en : m.enemies) {
+                if (en.dead) continue;
+                en.stunTimer = std::max(en.stunTimer, 1.5f);
+                float dx = en.x - m.player.x, dy = en.y - m.player.y;
+                float d = std::max(1.f, std::hypot(dx,dy));
+                en.x += (dx/d)*60; en.y += (dy/d)*60;
+                en.x = clampF(en.x, TILE*1.5f, GW-TILE*1.5f);
+                en.y = clampF(en.y, TILE*1.5f, GH-TILE*1.5f);
+            }
+        }
+        // SK_MAGMA : flaque de lave si ennemi brûlait
+        if (Skills::hasSkill(m, SK_MAGMA) && e.burnTimer > 0) {
+            LavaTile lv; lv.x = e.x; lv.y = e.y; lv.life = 4.0f;
+            m.lavaTiles.push_back(lv);
+        }
+        // SK_FREEZE_NOVA_KILL : explosion si ennemi était gelé
+        if (Skills::hasSkill(m, SK_FREEZE_NOVA_KILL) && e.slowTimer > 0.5f) {
+            for (auto &en : m.enemies) {
+                if (en.dead) continue;
+                if (distF(en.x, en.y, e.x, e.y) < 50) hurtEnemy(m, en, 20.f, true);
+            }
+            for (int i=0;i<12;++i) {
+                float a=(i/12.f)*6.28f;
+                Particle p; p.x=e.x; p.y=e.y;
+                p.vx=std::cos(a)*150; p.vy=std::sin(a)*150;
+                p.color=Palette::PAL_ICE[rndI(0,1)]; p.life=p.maxLife=0.6f; p.size=4; p.noGravity=true;
+                m.particles.push_back(p);
+            }
+        }
+        // SK_EXECUTE already handled (the kill itself)
+        // SK_OVERLOAD : reset après un kill (ou after dealing damage - handled in hurtPlayer)
 
         if (Skills::hasSkill(m, SK_VAMP_NERFED) && QRandomGenerator::global()->generateDouble()<0.12)
             m.player.hp = std::min(m.player.maxHp, m.player.hp + 1.f);
@@ -397,6 +506,42 @@ void updateBullets(GameModel &m, float dt)
                     if (Skills::hasSkill(m, SK_KNOCKBACK) && !e.dead) {
                         float ka = b.angle;
                         e.x += std::cos(ka)*8; e.y += std::sin(ka)*8;
+                    }
+                    // SK_ACID_ARROWS : corrosion
+                    if (Skills::hasSkill(m, SK_ACID_ARROWS) && !e.dead)
+                        e.corrodStacks = std::min(3, e.corrodStacks + 1);
+                    // SK_CHAIN_ARROW : enchaîne sur ennemi voisin
+                    if (Skills::hasSkill(m, SK_CHAIN_ARROW) && !b.splitChild && !e.dead) {
+                        for (auto &en2 : m.enemies) {
+                            if (en2.dead || en2.id == e.id) continue;
+                            if (distF(en2.x, en2.y, e.x, e.y) < 80) {
+                                hurtEnemy(m, en2, b.damage * 0.70f);
+                                break;
+                            }
+                        }
+                    }
+                    // SK_ELECTRIC_HIT : 15% chance éclair voisin
+                    if (Skills::hasSkill(m, SK_ELECTRIC_HIT) && !e.dead
+                        && QRandomGenerator::global()->generateDouble() < 0.15) {
+                        for (auto &en2 : m.enemies) {
+                            if (en2.dead || en2.id == e.id) continue;
+                            if (distF(en2.x, en2.y, e.x, e.y) < 80) {
+                                hurtEnemy(m, en2, 15.f);
+                                break;
+                            }
+                        }
+                    }
+                    // SK_SCATTERSHOT : 30% chance 3 mini-flèches
+                    if (Skills::hasSkill(m, SK_SCATTERSHOT) && !b.splitChild
+                        && QRandomGenerator::global()->generateDouble() < 0.30) {
+                        for (int k=0;k<3;++k) {
+                            float sa = b.angle + rndF(-0.8f, 0.8f);
+                            Bullet sb; sb.x=b.x; sb.y=b.y;
+                            sb.vx=std::cos(sa)*200; sb.vy=std::sin(sa)*200;
+                            sb.angle=sa; sb.damage=b.damage*0.35f; sb.enemy=false;
+                            sb.splitChild=true; sb.hitIds.insert(e.id);
+                            m.bullets.push_back(sb);
+                        }
                     }
                     if (Skills::hasSkill(m, SK_ICE_SHARDS) && !b.splitChild
                         && QRandomGenerator::global()->generateDouble() < 0.20) {

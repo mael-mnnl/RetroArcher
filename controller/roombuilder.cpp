@@ -4,7 +4,9 @@
 #include "dialogsystem.h"
 #include "levelgen.h"
 #include "relicsystem.h"
+#include "spellsystem.h"
 #include "../model/gamemodel.h"
+#include "../model/spellsdata.h"
 #include "../core/constants.h"
 #include "../core/utils.h"
 #include <QRandomGenerator>
@@ -22,6 +24,43 @@ bool isFinalBossRoom(int room) { return room == 25 || room == 30; }
 
 static float ascensionDmgMul(const GameModel &m)  { return m.ascensionEnabled ? 1.30f : 1.f; }
 static float ascensionSpeedMul(const GameModel &m){ return m.ascensionEnabled ? 1.15f : 1.f; }
+
+// Recalcule les stats d'équipement sur le joueur
+static void applyEquipment(GameModel &m)
+{
+    Player &pl = m.player;
+    pl.spellDmgMul = 1.0f;
+    pl.shieldMax   = 0;
+
+    for (int slot = 0; slot < EQ__COUNT; ++slot) {
+        const EquipItem &it = pl.equipped[slot];
+        if (it.empty) continue;
+        pl.spellDmgMul *= it.spellDmgMul;
+        pl.shieldMax   += it.shieldMax;
+    }
+    if (pl.shieldHp > pl.shieldMax) pl.shieldHp = pl.shieldMax;
+}
+
+// Tente de dropper un item d'équipement
+static void tryEquipDrop(GameModel &m, float x, float y, int worldIdx)
+{
+    float chance = 0.04f + worldIdx * 0.008f;
+    if (QRandomGenerator::global()->generateDouble() > chance) return;
+
+    int rarityRoll = QRandomGenerator::global()->bounded(100);
+    int rarity = (rarityRoll < 60) ? ER_Common : (rarityRoll < 90) ? ER_Rare : ER_Epic;
+    int type   = QRandomGenerator::global()->bounded(EQ__COUNT);
+
+    EquipItem item = makeEquipItem((EquipType)type, rarity, worldIdx);
+
+    Pickup pu;
+    pu.type = PU_EquipDrop;
+    pu.x = x; pu.y = y;
+    pu.vx = rndF(-40,40); pu.vy = rndF(-60,-20);
+    pu.lifeSec = 30.f;
+    pu.equipItem = item;
+    m.pickups.push_back(pu);
+}
 
 void spawnMinion(GameModel &m, float x, float y, int hp, float speed, EnemyType type)
 {
@@ -48,8 +87,9 @@ void startGame(GameModel &m)
     m.player.classId    = m.selectedClassId;
     m.player.relicId    = m.selectedRelicId;
     m.player.gold       = m.blessingStartGold;
+    m.player.dashCharges    = 1;
+    m.player.dashChargesMax = 1;
 
-    // Apply class stats
     if (m.selectedClassId >= 0 && m.selectedClassId < (int)m.allClasses.size()) {
         const ClassInfo &c = m.allClasses[m.selectedClassId];
         m.player.maxHp     = c.baseHp;
@@ -60,11 +100,9 @@ void startGame(GameModel &m)
         m.player.grenadeAmmo = c.startGrenade;
         if (c.startSkillId >= 0) m.player.skills.push_back(c.startSkillId);
     }
-    // Blessing bonuses
     m.player.maxHp += m.blessingMaxHpBonus;
     m.player.hp = m.player.maxHp;
 
-    // Relics (re-apply after class to be sure)
     if (m.selectedRelicId == REL_GoldenSeed) {
         m.player.maxHp = std::max(1.f, m.player.maxHp - 1);
         m.player.hp = std::min(m.player.maxHp, m.player.hp);
@@ -78,6 +116,8 @@ void startGame(GameModel &m)
     m.fxEffects.clear();
     m.obstacles.clear();
     m.activeCurses.clear();
+    m.shadowClones.clear();
+    m.lavaTiles.clear();
     m.bossesKilledThisRun = 0;
     m.currentRoom = 1;
     m.bossIndex   = -1;
@@ -93,15 +133,36 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
     m.pickups.clear();
     m.bossIndex = -1;
     for (int i = 0; i < 4; ++i) m.doorOpen[i] = false;
+    m.shadowClones.clear();
+    m.lavaTiles.clear();
 
-    // Curse : -1 PV par salle
+    // Réinitialiser les compteurs par salle
+    m.player.roomKills       = 0;
+    m.player.barrierRoomUsed = false;
+    m.player.warcryDone      = false;
+    m.player.reaperKills     = 0;
+    m.player.momentumDist    = 0;
+
+    // Regen bouclier complète à chaque salle
+    if (m.player.shieldMax > 0) m.player.shieldHp = m.player.shieldMax;
+
+    // SK_WARDING
+    if (Skills::hasSkill(m, SK_WARDING) && roomIndex > 1)
+        m.player.hp = std::min(m.player.maxHp, m.player.hp + 1.f);
+
+    // SK_AWAKENING : buff aléatoire
+    if (Skills::hasSkill(m, SK_AWAKENING)) {
+        m.player.awakenMul  = 1.10f;
+        m.player.awakenBuff = 30.f;
+    }
+
+    // Curse BloodTax
     if (std::find(m.activeCurses.begin(), m.activeCurses.end(), CRS_BloodTax) != m.activeCurses.end()) {
         if (roomIndex > 1) {
             m.player.hp = std::max(1.f, m.player.hp - 1);
         }
     }
 
-    // Type de la salle
     m.roomType = (RoomType)LevelGen::pickRoomType(m, roomIndex);
     LevelGen::generateObstacles(m, roomIndex);
 
@@ -119,12 +180,21 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
     m.challengeStarted = false;
     m.challengePassed  = true;
 
-    // Salles spéciales : pas d'ennemis
+    // SK_DOUBLE_DASH : 2 charges
+    if (Skills::hasSkill(m, SK_DOUBLE_DASH)) {
+        m.player.dashChargesMax = 2;
+        m.player.dashCharges    = 2;
+    } else {
+        m.player.dashChargesMax = 1;
+    }
+
+    // Recalcul équipement
+    applyEquipment(m);
+
+    // Salles spéciales sans ennemis
     if (m.roomType == RT_Shop || m.roomType == RT_Forge) {
-        // Ouvre toutes les portes deja
         for (int i = 0; i < 4; ++i) m.doorOpen[i] = true;
         m.state = GS_RoomCleared;
-        // Prépare shopItems si shop
         if (m.roomType == RT_Shop) {
             m.shopItems.clear(); m.shopPrices.clear();
             std::vector<int> pool;
@@ -133,20 +203,39 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
             for (int i = (int)pool.size()-1; i > 0; --i) { int j = rndI(0, i); std::swap(pool[i], pool[j]); }
             for (int i = 0; i < std::min(3, (int)pool.size()); ++i) {
                 m.shopItems.push_back(pool[i]);
-                m.shopPrices.push_back(20 + rndI(0, 30));
+                m.shopPrices.push_back(8 + rndI(0, 12));  // moins cher : 8-20$ au lieu de 20-50$
             }
         }
         return;
     }
+
+    if (m.roomType == RT_BlackMarket) {
+        for (int i = 0; i < 4; ++i) m.doorOpen[i] = true;
+        m.state = GS_RoomCleared;
+        // Préparer les sorts du marché noir
+        m.blackMarketSpells.clear(); m.blackMarketPrices.clear();
+        std::vector<int> pool;
+        for (int i = 0; i < SP__COUNT; ++i) pool.push_back(i);
+        // Exclure les sorts déjà équipés
+        for (int slot : m.player.spellSlots)
+            if (slot >= 0) pool.erase(std::remove(pool.begin(), pool.end(), slot), pool.end());
+        for (int i = (int)pool.size()-1; i > 0; --i) { int j = rndI(0, i); std::swap(pool[i], pool[j]); }
+        for (int i = 0; i < std::min(4, (int)pool.size()); ++i) {
+            m.blackMarketSpells.push_back(pool[i]);
+            int baseCost = 45;
+            for (auto &sp : m.allSpells) if (sp.id == (SpellId)pool[i]) { baseCost = sp.baseCost; break; }
+            m.blackMarketPrices.push_back(baseCost + rndI(-5, 10));
+        }
+        return;
+    }
+
     if (m.roomType == RT_Challenge) {
-        // Quelques ennemis difficiles mais clear == bonus
         for (int i = 0; i < 6; ++i) {
             float ex, ey; int safety = 40;
             do {
                 ex = rndF(TILE*2.5f, GW-TILE*2.5f); ey = rndF(TILE*2.5f, GH-TILE*2.5f);
                 safety--;
-            } while ((distF(ex, ey, m.player.x, m.player.y) < 130
-                     || Collision::collidesObstacle(m, ex, ey, 18)) && safety > 0);
+            } while (distF(ex, ey, m.player.x, m.player.y) < 130 && safety > 0);
             Enemy e; e.id = m.nextEnemyId++; e.x = ex; e.y = ey;
             e.type = ET_Bat; e.hp = e.maxHp = 35; e.speed = rndF(70,95); e.size = 28;
             e.zigDir = (rndI(0,1)==0)?1.f:-1.f; e.anim = AN_Walk;
@@ -185,7 +274,7 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
             boss.shootCd = 0.7f; boss.burstCd = 3.5f;
             boss.specialCd = 5.f; boss.summonCd = 6.f; boss.chargeCd = 4.5f;
             boss.type = ET_FinalBoss;
-        } else { // Lord Malificus (monde 6)
+        } else {
             boss.hp = boss.maxHp = 3000*hpMul; boss.speed = 65; boss.damage = 2; boss.size = 96;
             boss.shootCd = 0.5f; boss.burstCd = 2.5f;
             boss.specialCd = 3.5f; boss.summonCd = 5.f; boss.chargeCd = 3.5f;
@@ -200,7 +289,7 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
         return;
     }
 
-    // ===== Salle normale (peut etre Elite) =====
+    // ===== Salle normale =====
     int roomInWorld = ((roomIndex - 1) % 5) + 1;
     int count = 3 + roomInWorld + worldIdx;
     if (count > 12) count = 12;
@@ -219,8 +308,7 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
             ex = rndF(TILE*2.5f, GW-TILE*2.5f);
             ey = rndF(TILE*2.5f, GH-TILE*2.5f);
             safety--;
-        } while ((distF(ex, ey, m.player.x, m.player.y) < 130.f
-                  || Collision::collidesObstacle(m, ex, ey, 18)) && safety > 0);
+        } while (distF(ex, ey, m.player.x, m.player.y) < 130.f && safety > 0);
 
         Enemy e;
         float r = QRandomGenerator::global()->generateDouble();
@@ -250,7 +338,6 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
             else if (r < 0.75) { e.type=ET_Brute; e.hp=e.maxHp=210; e.speed=rndF(45,60); e.size=36; e.damage=2; }
             else { e.type=ET_Mage; e.hp=e.maxHp=140; e.speed=rndF(45,60); e.size=32; e.shootCd=rndF(1.2f,2.0f); }
         } else {
-            // Monde 6 : ennemis durs
             if (r < 0.20) { e.type=ET_Brute; e.hp=e.maxHp=260; e.speed=rndF(50,65); e.size=36; e.damage=2; }
             else if (r < 0.45) { e.type=ET_Mage; e.hp=e.maxHp=180; e.speed=rndF(50,65); e.size=32; e.shootCd=rndF(1.0f,1.6f); }
             else if (r < 0.70) { e.type=ET_Skel; e.hp=e.maxHp=160; e.speed=rndF(60,75); e.size=32; e.shootCd=rndF(0.9f,1.6f); }
@@ -258,25 +345,13 @@ void buildRoom(GameModel &m, int roomIndex, int entryDoor)
         }
         spawnEnemyHere(e, ex, ey);
     }
+}
 
-    // Si Elite : ajoute un champion
-    if (m.roomType == RT_Elite) {
-        Enemy e;
-        float ex, ey; int safety = 50;
-        do {
-            ex = rndF(TILE*3, GW-TILE*3); ey = rndF(TILE*3, GH-TILE*3); safety--;
-        } while ((distF(ex, ey, m.player.x, m.player.y) < 150
-                 || Collision::collidesObstacle(m, ex, ey, 24)) && safety > 0);
-        e.type = ET_Elite; e.elite = true;
-        e.eliteVariant = rndI(0, 3);
-        e.hp = e.maxHp = (300 + worldIdx*100) * Relic::enemyHpMul(m) * ascensionDmgMul(m);
-        e.speed = (45 + worldIdx*5) * ascensionSpeedMul(m); e.damage = 2;
-        e.size = 44;
-        e.shootCd = rndF(1.0f, 1.8f);
-        e.chargeCd = 4.f;
-        e.dropChance = 1.f;
-        spawnEnemyHere(e, ex, ey);
-    }
+// Appelé depuis CombatSystem quand un ennemi meurt — dropper équipement
+void tryEquipDropOnKill(GameModel &m, const Enemy &e)
+{
+    int worldIdx = worldOf(m.currentRoom) - 1;
+    tryEquipDrop(m, e.x, e.y, worldIdx);
 }
 
 }}

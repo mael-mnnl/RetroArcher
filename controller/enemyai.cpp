@@ -26,6 +26,7 @@ void update(GameModel &m, float dt)
         Enemy &e = m.enemies[idx];
         if (e.hitFlash > 0) e.hitFlash -= dt;
         if (e.slowTimer > 0) e.slowTimer -= dt;
+        if (e.stunTimer > 0) { e.stunTimer -= dt; e.animTimer += dt; continue; }
         if (e.dead) { e.animTimer += dt; continue; }
 
         float adt = dt * (e.slowTimer > 0 ? 0.5f : 1.f) * curseEnemyMul;

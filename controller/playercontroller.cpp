@@ -4,6 +4,7 @@
 #include "collisionsystem.h"
 #include "cursesystem.h"
 #include "relicsystem.h"
+#include "spellsystem.h"
 #include "../model/gamemodel.h"
 #include "../core/utils.h"
 #include "../core/constants.h"
@@ -37,7 +38,8 @@ void update(GameModel &m, float dt)
     pl.stillSec = pl.moving ? 0 : (pl.stillSec + dt);
 
     float spd = pl.speed * Skills::speedMul(m);
-    if (pl.dashActive > 0) spd *= 4.5f;
+    if (Skills::hasSkill(m, SK_ACCELERATE)) spd *= pl.accelerateMul;
+    if (pl.dashActive > 0) spd *= 2.5f;   // dash réduit : 2.5x au lieu de 4.5x
 
     if (pl.moving) {
         vx /= len; vy /= len;
@@ -46,16 +48,23 @@ void update(GameModel &m, float dt)
         pl.facingLeft = vx < 0;
         if (pl.anim != AN_Walk) { pl.anim = AN_Walk; pl.animTimer = 0; }
 
+        // SK_MOMENTUM
+        if (Skills::hasSkill(m, SK_MOMENTUM))
+            pl.momentumDist += spd * dt;
+
         if (Skills::hasSkill(m, SK_RAM) && pl.dashActive > 0) {
             for (auto &e : m.enemies) {
                 if (e.dead) continue;
                 if (distF(e.x, e.y, pl.x, pl.y) < 22 + e.size*0.4f) {
                     if (e.hitFlash <= 0.05f) Combat::hurtEnemy(m, e, 25);
+                    // SK_DIVE_DASH : étourdit
+                    if (Skills::hasSkill(m, SK_DIVE_DASH)) e.stunTimer = std::max(e.stunTimer, 0.8f);
                 }
             }
         }
     } else {
         if (pl.atkTimer <= 0 && pl.anim != AN_Hurt) pl.anim = AN_Idle;
+        pl.momentumDist = 0;
     }
     pl.x = clampF(pl.x, -TILE, GW+TILE);
     pl.y = clampF(pl.y, -TILE, GH+TILE);
@@ -70,6 +79,12 @@ void update(GameModel &m, float dt)
         pl.anim = AN_Atk; pl.animTimer = 0; pl.atkTimer = 0.4f;
         if (Skills::hasSkill(m, SK_BURST_FIRE) && QRandomGenerator::global()->generateDouble() < 0.25)
             pl.burstQueueTimer = 0.10f;
+
+        // SK_LUCKY_SHOT
+        if (Skills::hasSkill(m, SK_LUCKY_SHOT)) {
+            pl.shotCounter++;
+            if (pl.shotCounter >= 7) { pl.shotCounter = 0; /* handled in shootPlayer via flag */ }
+        }
     }
     if (pl.burstQueueTimer > 0) {
         pl.burstQueueTimer -= dt;
@@ -83,9 +98,11 @@ void update(GameModel &m, float dt)
             Combat::throwGrenade(m); pl.grenadeAmmo--;
         }
     }
-    if (m.keys.contains(Qt::Key_Shift) && Skills::hasSkill(m, SK_DASH)
-        && pl.dashCd <= 0 && pl.dashActive <= 0) {
-        // Si visée (clic souris memorisé), dasher vers ce point
+
+    // Dash (SHIFT)
+    bool canDash = Skills::hasSkill(m, SK_DASH) && pl.dashCd <= 0 && pl.dashActive <= 0
+                   && pl.dashCharges > 0;
+    if (m.keys.contains(Qt::Key_Shift) && canDash) {
         if (pl.hasDashAim) {
             float ang = std::atan2(pl.dashAimY - pl.y, pl.dashAimX - pl.x);
             pl.facing = ang;
@@ -93,23 +110,51 @@ void update(GameModel &m, float dt)
             pl.hasDashAim = false;
         }
         Combat::activateDash(m);
-        // Curse SlowDash : double le cd
         pl.dashCd *= Curse::dashCdMul(m);
+        pl.dashCharges--;
+
+        // SK_SHADOW_DASH : clone
+        if (Skills::hasSkill(m, SK_SHADOW_DASH)) {
+            ShadowClone sc; sc.x = pl.x; sc.y = pl.y; sc.life = 2.0f;
+            m.shadowClones.push_back(sc);
+        }
+        // SK_SPECTRAL_DASH : invulnérabilité extra
+        if (Skills::hasSkill(m, SK_SPECTRAL_DASH)) pl.invincibility += 1.0f;
     }
+
+    // Arrêt du temps (T)
     if (m.keys.contains(Qt::Key_T) && Skills::hasSkill(m, SK_TIME_STOP) && !pl.timeStopUsed) {
         Combat::activateTimeStop(m);
     }
 
-    if (pl.invincibility <= 0 && pl.dashActive <= 0) {
+    // Pas du Vide (Maj+T)
+    if (m.keys.contains(Qt::Key_T) && m.keys.contains(Qt::Key_Shift)
+        && Skills::hasSkill(m, SK_VOID_STEP) && pl.voidStepCd <= 0) {
+        pl.voidStepCd     = 20.f;
+        pl.voidStepActive = 2.0f;
+        pl.invincibility  = 2.0f;
+    }
+
+    // Collisions joueur
+    if (pl.invincibility <= 0 && pl.dashActive <= 0 && pl.voidStepActive <= 0) {
         for (auto &e : m.enemies) {
-            if (e.dead) continue;
+            if (e.dead || e.stunTimer > 0) continue;
             if (distF(pl.x, pl.y, e.x, e.y) < 10 + e.size*0.35f) {
                 if (Skills::hasSkill(m, SK_DODGE) && QRandomGenerator::global()->generateDouble()<0.06) break;
                 if (Skills::hasSkill(m, SK_SHIELD) && pl.shieldReadyTimer <= 0) {
                     pl.shieldReadyTimer = 12.f; pl.invincibility = 1.f; break;
                 }
                 if (Skills::hasSkill(m, SK_THORNS)) Combat::hurtEnemy(m, e, e.damage * 0.5f);
-                Combat::hurtPlayer(m, e.damage * Skills::incomingDmgMul(m) * Curse::playerIncomingMul(m));
+                float dmgIncoming = e.damage * Skills::incomingDmgMul(m) * Curse::playerIncomingMul(m);
+                // SK_STONE_SKIN
+                if (Skills::hasSkill(m, SK_STONE_SKIN)) dmgIncoming = std::max(0.5f, dmgIncoming - 1.f);
+                // SK_IRON_WILL
+                if (Skills::hasSkill(m, SK_IRON_WILL) && pl.hp < pl.maxHp * 0.30f) dmgIncoming *= 0.6f;
+                // SK_BARRIER_ROOM
+                if (Skills::hasSkill(m, SK_BARRIER_ROOM) && !pl.barrierRoomUsed) {
+                    pl.barrierRoomUsed = true; pl.invincibility = 0.5f; break;
+                }
+                Combat::hurtPlayer(m, dmgIncoming);
                 break;
             }
         }
@@ -126,7 +171,13 @@ void update(GameModel &m, float dt)
                     pl.shieldReadyTimer = 12.f; pl.invincibility = 1.f; b.dead = true; break;
                 }
                 b.dead = true;
-                Combat::hurtPlayer(m, b.damage * Skills::incomingDmgMul(m) * Curse::playerIncomingMul(m));
+                float dmgIncoming = b.damage * Skills::incomingDmgMul(m) * Curse::playerIncomingMul(m);
+                if (Skills::hasSkill(m, SK_STONE_SKIN)) dmgIncoming = std::max(0.5f, dmgIncoming - 1.f);
+                if (Skills::hasSkill(m, SK_IRON_WILL) && pl.hp < pl.maxHp * 0.30f) dmgIncoming *= 0.6f;
+                if (Skills::hasSkill(m, SK_BARRIER_ROOM) && !pl.barrierRoomUsed) {
+                    pl.barrierRoomUsed = true; pl.invincibility = 0.5f; break;
+                }
+                Combat::hurtPlayer(m, dmgIncoming);
             }
         }
     }

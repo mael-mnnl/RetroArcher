@@ -6,6 +6,7 @@
 #include "model/worldsdata.h"
 #include "model/contentdata.h"
 #include "model/savemanager.h"
+#include "model/spellsdata.h"
 #include "controller/playercontroller.h"
 #include "controller/enemyai.h"
 #include "controller/combatsystem.h"
@@ -20,6 +21,7 @@
 #include "controller/scoresystem.h"
 #include "controller/biomefxsystem.h"
 #include "controller/levelgen.h"
+#include "controller/spellsystem.h"
 #include <QPainter>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -50,6 +52,7 @@ GameWidget::GameWidget(QWidget *parent)
     Model::loadCurses(m_model);
     Model::loadRelics(m_model);
     Model::loadClasses(m_model);
+    Model::loadSpells(m_model.allSpells);
     Model::loadSettings(m_model);
     m_model.player.skinIndex  = m_model.menuSelectedSkin;
     m_model.player.atkVariant = m_model.menuSelectedAtk;
@@ -61,7 +64,6 @@ GameWidget::GameWidget(QWidget *parent)
 
 void GameWidget::launchSelection()
 {
-    // Quand le joueur a choisi classe + relique, on demarre la partie
     Controller::Room::startGame(m_model);
 }
 
@@ -88,10 +90,9 @@ void GameWidget::tick()
     m_lastTickNs = now;
     m_model.globalTime += dt;
 
-    // Biome FX et fx effects tournent dès qu'on est en jeu
     if (m_model.state == GS_Playing || m_model.state == GS_RoomCleared
         || m_model.state == GS_Shop || m_model.state == GS_Forge
-        || m_model.state == GS_Challenge) {
+        || m_model.state == GS_Challenge || m_model.state == GS_BlackMarket) {
         Controller::BiomeFX::update(m_model, dt);
         Controller::BiomeFX::updateFx(m_model, dt);
         Controller::Pickup::update(m_model, dt);
@@ -112,7 +113,6 @@ void GameWidget::tick()
                 Controller::Score::addToLeaderboard(m_model);
                 Model::saveSettings(m_model);
             } else {
-                // Apres un boss : proposer aussi une malediction
                 bool wasBoss = Controller::Room::isBossRoom(m_model.currentRoom);
                 if (wasBoss && m_model.currentRoom > 5) {
                     Controller::Curse::generateChoices(m_model);
@@ -142,6 +142,7 @@ void GameWidget::updateGame(float dt)
     Controller::EnemyAI::update(m_model, worldDt);
     Controller::Combat::updateBullets(m_model, worldDt);
     Controller::Combat::updateParticles(m_model, dt);
+    Controller::Spell::update(m_model, dt);
 
     if (m_model.dlgTimer > 0)        m_model.dlgTimer        -= dt;
     if (m_model.dlgFadeIn > 0)       m_model.dlgFadeIn       -= dt;
@@ -211,15 +212,20 @@ void GameWidget::updateGame(float dt)
         if (m_model.player.rageStackTimer <= 0) m_model.player.rageStacks = 0;
     }
 
-    // Track damage taken in challenge room
+    // SK_WARCRY : 1x à l'entrée d'une salle
+    if (Skills::hasSkill(m_model, SK_WARCRY) && !m_model.player.warcryDone
+        && m_model.player.roomKills == 0) {
+        m_model.player.warcryDone = true;
+        for (auto &e : m_model.enemies)
+            if (!e.dead) e.stunTimer = std::max(e.stunTimer, 0.8f);
+    }
+
     if (m_model.player.inChallenge) {
-        // (le no-hit est detecte par hurtPlayer - on traque via le hp)
         if (m_model.player.invincibility > 0.5f && m_model.challengeStarted)
             m_model.challengePassed = false;
         m_model.challengeStarted = true;
     }
 
-    // Cleanup corpses
     for (auto &e : m_model.enemies)
         if (e.dead && e.anim==AN_Death) {
             e.corpseFadeTimer += dt;
@@ -229,7 +235,6 @@ void GameWidget::updateGame(float dt)
                           [](const Enemy &e){ return e.corpse; }), m_model.enemies.end());
 
     if (m_model.player.hp <= 0 && m_model.state != GS_GameOver) {
-        // Phoenix Tear relic
         if (m_model.selectedRelicId == REL_PhoenixTear && m_model.runHasFreeRevive) {
             m_model.runHasFreeRevive = false;
             m_model.player.hp = m_model.player.maxHp;
@@ -247,7 +252,15 @@ void GameWidget::updateGame(float dt)
             m_model.player.hp = 1; m_model.player.invincibility = 1.5f;
             return;
         }
-        // BloodOrb : perd 1 skill aleatoire
+        // SK_SOUL_STONE : conserver 1 skill
+        if (Skills::hasSkill(m_model, SK_SOUL_STONE) && !m_model.player.soulStoneUsed
+            && m_model.player.skills.size() > 1) {
+            m_model.player.soulStoneUsed = true;
+            int keepIdx = rndI(0, (int)m_model.player.skills.size()-1);
+            int keptId  = m_model.player.skills[keepIdx];
+            m_model.player.skills.clear();
+            m_model.player.skills.push_back(keptId);
+        }
         if (m_model.selectedRelicId == REL_BloodOrb && !m_model.player.skills.empty()) {
             int idx = rndI(0, (int)m_model.player.skills.size()-1);
             m_model.player.skills.erase(m_model.player.skills.begin() + idx);
@@ -279,7 +292,6 @@ void GameWidget::updateGame(float dt)
                     return;
                 }
             }
-            // Challenge réussi : récompense
             if (m_model.player.inChallenge && m_model.challengePassed) {
                 Pickup::spawnChest(m_model, m_model.player.x + 30, m_model.player.y);
                 Pickup::spawnGold (m_model, m_model.player.x - 30, m_model.player.y, 30);
@@ -308,7 +320,6 @@ void GameWidget::checkDoorTransition()
         m_model.exitDoor = door;
         m_model.state = GS_FadeOut;
         m_model.fadeAmount = 0;
-        // Couleur de fade selon biome
         int wi = std::min(6, ((m_model.currentRoom-1)/5)+1) - 1;
         if (wi >= 0 && wi < m_model.worlds.size())
             m_model.fadeColor = m_model.worlds[wi].accent;
@@ -356,6 +367,14 @@ void GameWidget::paintEvent(QPaintEvent *)
     case GS_Challenge:
         m_gameView.render(p, m_model);
         break;
+    case GS_BlackMarket:
+        m_gameView.render(p, m_model);
+        m_menuView.drawBlackMarket(p, m_model, m_blackMarketHover);
+        break;
+    case GS_Paused:
+        m_gameView.render(p, m_model);
+        m_menuView.drawPauseMenu(p, m_model);
+        break;
     case GS_SkillSelect:
         m_gameView.render(p, m_model);
         m_menuView.drawSkillSelect(p, m_model);
@@ -380,6 +399,61 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
     int k = event->key();
     m_model.keys.insert(k);
 
+    // ── Menu pause (Echap en jeu) ──
+    if ((m_model.state == GS_Playing || m_model.state == GS_RoomCleared)
+        && k == Qt::Key_Escape) {
+        m_model.stateBeforePause = m_model.state;
+        m_model.state   = GS_Paused;
+        m_model.pauseTab = 0;
+        return;
+    }
+    if (m_model.state == GS_Paused) {
+        if (k == Qt::Key_Escape) {
+            m_model.state = m_model.stateBeforePause;
+            return;
+        }
+        // Navigation des onglets
+        if (k == Qt::Key_Left || k == Qt::Key_A || k == Qt::Key_Q)
+            m_model.pauseTab = (m_model.pauseTab + 2) % 3;
+        else if (k == Qt::Key_Right || k == Qt::Key_D)
+            m_model.pauseTab = (m_model.pauseTab + 1) % 3;
+        else if (k == Qt::Key_1) m_model.pauseTab = 0;
+        else if (k == Qt::Key_2) m_model.pauseTab = 1;
+        else if (k == Qt::Key_3) m_model.pauseTab = 2;
+        // Onglet inventaire : équiper un item
+        else if (m_model.pauseTab == 1) {
+            if (k == Qt::Key_Up || k == Qt::Key_W || k == Qt::Key_Z) {
+                if (m_model.pauseInvHover > 0) m_model.pauseInvHover--;
+            } else if (k == Qt::Key_Down || k == Qt::Key_S) {
+                int maxIdx = (int)m_model.player.bag.size() - 1;
+                if (m_model.pauseInvHover < maxIdx) m_model.pauseInvHover++;
+            } else if (k == Qt::Key_Space || k == Qt::Key_Return) {
+                // Équiper l'item sélectionné du sac
+                auto &bag = m_model.player.bag;
+                if (m_model.pauseInvHover >= 0 && m_model.pauseInvHover < (int)bag.size()) {
+                    EquipItem item = bag[m_model.pauseInvHover];
+                    int slot = (int)item.type;
+                    // Swap avec le slot équipé
+                    EquipItem old = m_model.player.equipped[slot];
+                    m_model.player.equipped[slot] = item;
+                    bag[m_model.pauseInvHover] = old;
+                    if (old.empty) bag.erase(bag.begin() + m_model.pauseInvHover);
+                    m_model.pauseInvHover = std::max(0, m_model.pauseInvHover - 1);
+                }
+            }
+        }
+        return;
+    }
+
+    // ── Sorts 1-4 en jeu ──
+    if (m_model.state == GS_Playing || m_model.state == GS_RoomCleared) {
+        if (k >= Qt::Key_1 && k <= Qt::Key_4) {
+            int slot = k - Qt::Key_1;
+            if (m_model.player.spellSlots[slot] >= 0)
+                Controller::Spell::castSpell(m_model, slot);
+        }
+    }
+
     if (m_model.state == GS_Menu) {
         if (m_model.cheatFocused) {
             if (k == Qt::Key_Return || k == Qt::Key_Enter) {
@@ -396,7 +470,6 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
             return;
         }
         if (k==Qt::Key_Space || k==Qt::Key_Return) {
-            // Lancer aventure : class select -> relic select -> jeu
             m_classHover = 0; m_relicHover = 0;
             m_model.state = GS_ClassSelect;
         }
@@ -412,7 +485,7 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
         else if (k==Qt::Key_X) m_model.cheatFocused = true;
     } else if (m_model.state == GS_ClassSelect) {
         int n = (int)m_model.allClasses.size();
-        if (k==Qt::Key_Left || k==Qt::Key_A) m_classHover = (m_classHover+n-1)%n;
+        if (k==Qt::Key_Left || k==Qt::Key_A || k==Qt::Key_Q) m_classHover = (m_classHover+n-1)%n;
         else if (k==Qt::Key_Right || k==Qt::Key_D) m_classHover = (m_classHover+1)%n;
         else if (k==Qt::Key_Space || k==Qt::Key_Return) {
             m_model.selectedClassId = m_classHover;
@@ -438,7 +511,7 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
         }
     } else if (m_model.state == GS_Blessings) {
         if (k==Qt::Key_Escape) m_model.state = GS_Menu;
-        else if (k==Qt::Key_Up || k==Qt::Key_W) m_blessingHover = (m_blessingHover+2)%3;
+        else if (k==Qt::Key_Up || k==Qt::Key_W || k==Qt::Key_Z) m_blessingHover = (m_blessingHover+2)%3;
         else if (k==Qt::Key_Down || k==Qt::Key_S) m_blessingHover = (m_blessingHover+1)%3;
         else if (k==Qt::Key_Space || k==Qt::Key_Return) {
             int costs[3] = {1, 1, 2};
@@ -457,9 +530,9 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
     } else if (m_model.state == GS_Lore) {
         if (k==Qt::Key_Escape || k==Qt::Key_Return) m_model.state = GS_Menu;
     } else if (m_model.state == GS_SkinSelect) {
-        if (k==Qt::Key_Left || k==Qt::Key_A) m_model.menuSelectedSkin = (m_model.menuSelectedSkin+3)%4;
+        if (k==Qt::Key_Left || k==Qt::Key_A || k==Qt::Key_Q) m_model.menuSelectedSkin = (m_model.menuSelectedSkin+3)%4;
         else if (k==Qt::Key_Right || k==Qt::Key_D) m_model.menuSelectedSkin = (m_model.menuSelectedSkin+1)%4;
-        else if (k==Qt::Key_Up || k==Qt::Key_W) m_model.menuSelectedAtk = (m_model.menuSelectedAtk+2)%3;
+        else if (k==Qt::Key_Up || k==Qt::Key_W || k==Qt::Key_Z) m_model.menuSelectedAtk = (m_model.menuSelectedAtk+2)%3;
         else if (k==Qt::Key_Down || k==Qt::Key_S) m_model.menuSelectedAtk = (m_model.menuSelectedAtk+1)%3;
         else if (k==Qt::Key_Escape || k==Qt::Key_Return || k==Qt::Key_Space) {
             QSettings s("RetroArcher","RetroArcher");
@@ -469,11 +542,10 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
         }
     } else if (m_model.state == GS_Discoveries) {
         if (k==Qt::Key_Escape || k==Qt::Key_Return) m_model.state = GS_Menu;
-        else if (k==Qt::Key_Left  || k==Qt::Key_A) m_model.discoveryHover = (m_model.discoveryHover+5)%6;
+        else if (k==Qt::Key_Left  || k==Qt::Key_A || k==Qt::Key_Q) m_model.discoveryHover = (m_model.discoveryHover+5)%6;
         else if (k==Qt::Key_Right || k==Qt::Key_D) m_model.discoveryHover = (m_model.discoveryHover+1)%6;
     } else if (m_model.state == GS_GameOver || m_model.state == GS_Victory) {
-        if (k==Qt::Key_Space) { m_model.state = GS_Menu; }
-        else if (k==Qt::Key_Escape) m_model.state = GS_Menu;
+        if (k==Qt::Key_Space || k==Qt::Key_Escape) { m_model.state = GS_Menu; }
     } else if (m_model.state == GS_SkillSelect) {
         int idx = -1;
         if (k==Qt::Key_1) idx = 0; else if (k==Qt::Key_2) idx = 1; else if (k==Qt::Key_3) idx = 2;
@@ -482,7 +554,6 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
             Controller::Skills::applySkill(m_model, chosen, [](Model::GameModel &mm){
                 int entryDoor = (mm.exitDoor + 2) % 4;
                 Controller::Room::buildRoom(mm, mm.currentRoom + 1, entryDoor);
-                // Si nouvelle salle est shop/forge, le state est mis directement par buildRoom
                 if (mm.state != GS_RoomCleared) {
                     mm.state = GS_FadeIn;
                     mm.fadeAmount = 1.f;
@@ -501,35 +572,91 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
         int idx = -1;
         if (k==Qt::Key_1) idx = 0; else if (k==Qt::Key_2) idx = 1; else if (k==Qt::Key_3) idx = 2;
         if (idx >= 0 && idx < (int)m_model.shopItems.size()) {
-            if (m_model.player.gold >= m_model.shopPrices[idx]) {
+            if (m_model.player.gold >= m_model.shopPrices[idx]
+                && (int)m_model.player.skills.size() < 10) {
                 m_model.player.gold -= m_model.shopPrices[idx];
                 m_model.player.skills.push_back(m_model.shopItems[idx]);
                 m_model.shopItems.erase(m_model.shopItems.begin() + idx);
                 m_model.shopPrices.erase(m_model.shopPrices.begin() + idx);
             }
         } else if (k==Qt::Key_Escape) {
-            m_model.state = GS_Playing;  // sortir du shop = chercher porte
+            m_model.state = GS_Playing;
+        }
+    } else if (m_model.state == GS_BlackMarket) {
+        int idx = -1;
+        if (k==Qt::Key_1) idx=0; else if(k==Qt::Key_2) idx=1;
+        else if(k==Qt::Key_3) idx=2; else if(k==Qt::Key_4) idx=3;
+        if (idx >= 0 && idx < (int)m_model.blackMarketSpells.size()) {
+            // Trouver un slot libre
+            int freeSlot = -1;
+            for (int s = 0; s < 4; ++s)
+                if (m_model.player.spellSlots[s] < 0) { freeSlot = s; break; }
+            if (freeSlot >= 0 && m_model.player.gold >= m_model.blackMarketPrices[idx]) {
+                m_model.player.gold -= m_model.blackMarketPrices[idx];
+                m_model.player.spellSlots[freeSlot] = m_model.blackMarketSpells[idx];
+                m_model.blackMarketSpells.erase(m_model.blackMarketSpells.begin() + idx);
+                m_model.blackMarketPrices.erase(m_model.blackMarketPrices.begin() + idx);
+            }
+        } else if (k==Qt::Key_Escape) {
+            m_model.state = GS_Playing;
+        }
+        // Touche 5-8 pour retirer un sort équipé
+        if (k >= Qt::Key_5 && k <= Qt::Key_8) {
+            int slot = k - Qt::Key_5;
+            if (slot < 4) m_model.player.spellSlots[slot] = -1;
         }
     } else if (m_model.state == GS_Forge) {
         int n = (int)m_model.player.skills.size();
         if (n > 0) {
-            if (k==Qt::Key_Left || k==Qt::Key_A) m_forgeHover = (m_forgeHover+n-1)%n;
+            if (k==Qt::Key_Left || k==Qt::Key_A || k==Qt::Key_Q) m_forgeHover = (m_forgeHover+n-1)%n;
             else if (k==Qt::Key_Right || k==Qt::Key_D) m_forgeHover = (m_forgeHover+1)%n;
-            else if (k==Qt::Key_Up || k==Qt::Key_W) { m_forgeHover = std::max(0, m_forgeHover-6); }
+            else if (k==Qt::Key_Up || k==Qt::Key_W || k==Qt::Key_Z) { m_forgeHover = std::max(0, m_forgeHover-6); }
             else if (k==Qt::Key_Down || k==Qt::Key_S) { m_forgeHover = std::min(n-1, m_forgeHover+6); }
             else if (k==Qt::Key_Space || k==Qt::Key_Return) {
                 int oldId = m_model.player.skills[m_forgeHover];
-                int oldTier = 1;
-                for (auto &s : m_model.allSkills) if (s.id == oldId) { oldTier = s.worldTier; break; }
-                int newTier = std::min(m_model.worldsUnlocked, oldTier + 1);
-                // Choisir un nouveau skill du tier sup
-                std::vector<int> pool;
-                for (auto &s : m_model.allSkills)
-                    if (s.worldTier == newTier && s.id != oldId) pool.push_back(s.id);
-                if (!pool.empty()) {
-                    int newId = pool[rndI(0, (int)pool.size()-1)];
-                    m_model.player.skills[m_forgeHover] = newId;
+                // Chemins d'amélioration définis
+                struct UpgradePath { int from; int to; int cost; };
+                static const UpgradePath paths[] = {
+                    {SK_DBL, SK_TRI, 20},
+                    {SK_TRI, SK_QUAD_NERFED, 30},
+                    {SK_FST, SK_RAPID_RELOAD, 20},
+                    {SK_BNC, SK_RICOCHET_PLUS, 25},
+                    {SK_REGEN, SK_REGEN_BURST, 25},
+                    {SK_DASH, SK_DOUBLE_DASH, 35},
+                    {SK_POW, SK_HEAVY_ARROW, 20},
+                    {SK_POISON, SK_ACID_BURN, 30},
+                    {SK_FREEZE_HIT, SK_FREEZE_NOVA_KILL, 30},
+                    {SK_BLAZE, SK_MAGMA, 25},
+                    {SK_LIFESTEAL, SK_VAMPIRE_AURA, 35},
+                    {SK_CHAIN_ARROW, SK_THUNDER_ARROW, 25},
+                    {-1,-1,0}
+                };
+                int upgCost = -1; int upgTo = -1;
+                for (int pi = 0; paths[pi].from >= 0; ++pi) {
+                    if (paths[pi].from == oldId) {
+                        upgCost = paths[pi].cost; upgTo = paths[pi].to; break;
+                    }
+                }
+                if (upgCost > 0 && upgTo >= 0 && m_model.player.gold >= upgCost) {
+                    m_model.player.gold -= upgCost;
+                    m_model.player.skills[m_forgeHover] = upgTo;
                     m_forgeHover = 0;
+                } else if (upgCost < 0) {
+                    // Pas de chemin défini : amélioration aléatoire tier+1 pour 30$
+                    if (m_model.player.gold >= 30) {
+                        int oldTier = 1;
+                        for (auto &s : m_model.allSkills) if (s.id == oldId) { oldTier = s.worldTier; break; }
+                        int newTier = std::min(m_model.worldsUnlocked, oldTier + 1);
+                        std::vector<int> pool;
+                        for (auto &s : m_model.allSkills)
+                            if (s.worldTier == newTier && s.id != oldId) pool.push_back(s.id);
+                        if (!pool.empty()) {
+                            m_model.player.gold -= 30;
+                            int newId = pool[rndI(0, (int)pool.size()-1)];
+                            m_model.player.skills[m_forgeHover] = newId;
+                            m_forgeHover = 0;
+                        }
+                    }
                 }
             }
         }
@@ -540,7 +667,6 @@ void GameWidget::keyPressEvent(QKeyEvent *event)
 void GameWidget::keyReleaseEvent(QKeyEvent *event) { m_model.keys.remove(event->key()); }
 
 void GameWidget::mousePressEvent(QMouseEvent *e) {
-    // Dash directionnel : memorise la cible
     if (e->button() == Qt::RightButton
         && (m_model.state == GS_Playing || m_model.state == GS_RoomCleared)) {
         float mx = e->pos().x() / float(DISPLAY_SCALE);
@@ -549,13 +675,13 @@ void GameWidget::mousePressEvent(QMouseEvent *e) {
         m_model.player.dashAimY = my;
         m_model.player.hasDashAim = true;
     }
-    // Click sur Shop/Forge/Blessings
     if (e->button() == Qt::LeftButton) {
-        // En entree de RoomCleared dans Shop / Forge, on declenche le menu special
         if (m_model.state == GS_RoomCleared && m_model.roomType == Model::RT_Shop)
             m_model.state = GS_Shop;
         else if (m_model.state == GS_RoomCleared && m_model.roomType == Model::RT_Forge)
             m_model.state = GS_Forge;
+        else if (m_model.state == GS_RoomCleared && m_model.roomType == Model::RT_BlackMarket)
+            m_model.state = GS_BlackMarket;
     }
 }
 

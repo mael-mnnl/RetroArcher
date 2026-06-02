@@ -15,6 +15,7 @@ void startGame(Model::GameModel &m);
 void buildRoom(Model::GameModel &m, int roomIndex, int entryDoor);
 void spawnMinion(Model::GameModel &m, float x, float y, int hp, float speed,
                  Model::EnemyType type = Model::ET_Minion);
+void tryEquipDropOnKill(Model::GameModel &m, const Model::Enemy &e);
 
 }}
 
